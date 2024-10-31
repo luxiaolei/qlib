@@ -67,11 +67,18 @@ def create_env():
     temp_dir = tempfile.mkdtemp()
     env_path = Path(temp_dir).absolute()
     sys.stderr.write(f"Creating Virtual Environment with path: {env_path}...\n")
-    execute(f"conda create --prefix {env_path} python=3.7 -y")
-    python_path = env_path / "bin" / "python"  # TODO: FIX ME!
+    
+    # Install system dependencies first
+    #execute("sudo apt-get update", wait_when_err=True)
+    #execute("sudo apt-get install -y libopenblas-dev libblas-dev liblapack-dev gfortran", wait_when_err=True)
+    
+    # Create conda environment
+    execute(f"conda create --prefix {env_path} python=3.8 -y")
+    python_path = env_path / "bin" / "python"
     sys.stderr.write("\n")
+    
     # get anaconda activate path
-    conda_activate = Path(os.environ["CONDA_PREFIX"]) / "bin" / "activate"  # TODO: FIX ME!
+    conda_activate = Path(os.environ["CONDA_PREFIX"]) / "bin" / "activate"
     return temp_dir, env_path, python_path, conda_activate
 
 
@@ -326,7 +333,7 @@ class ModelRunner:
                     f"{python_path} -m pip install light-the-torch", wait_when_err=wait_when_err
                 )  # for automatically installing torch according to the nvidia driver
                 execute(
-                    f"{env_path / 'bin' / 'ltt'} install --install-cmd '{python_path} -m pip install {{packages}}' -- -r {req_path}",
+                    f"{env_path / 'bin' / 'ltt'} install -r {req_path}",
                     wait_when_err=wait_when_err,
                 )
             else:
