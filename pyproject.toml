@@ -1,2 +1,86 @@
+[tool.poetry]
+name = "pyqlib"
+version = "0.1.0"  # This will be dynamically updated based on qlib/__init__.py
+description = "A Quantitative-research Platform"
+authors = ["Microsoft Corporation <your-email@example.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [
+    { include = "qlib" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9.0,<4.0"
+numpy = ">=1.12.0, <1.24"
+pandas = ">=0.25.1"
+scipy = ">=1.7.3"
+requests = ">=2.18.0"
+sacred = ">=0.7.4"
+python-socketio = "*"
+redis = ">=3.0.1"
+python-redis-lock = ">=3.3.1"
+schedule = ">=0.6.0"
+cvxpy = ">=1.0.21"
+hyperopt = "0.1.2"
+fire = "0.5.0"
+statsmodels = "*"
+xlrd = ">=1.0.0"
+plotly = ">=4.12.0"
+matplotlib = ">=3.3"
+tables = ">=3.6.1"
+pyyaml = ">=5.3.1"
+mlflow = ">=1.12.1, <=1.30.0"
+packaging = ">=21.3,<25.0"
+tqdm = "*"
+loguru = "*"
+lightgbm = ">=3.3.0"
+tornado = "*"
+joblib = ">=0.17.0"
+ruamel-yaml = "<=0.17.36"
+pymongo = "3.7.2"
+scikit-learn = ">=0.22"
+dill = "*"
+filelock = "*"
+jinja2 = "*"
+gym = "*"
+cryptography = "*"
+protobuf = ">=3.20.1, <4.0.0" 
+langserve = "^0.3.0"
+xgboost = "^2.1.2"
+catboost = "^1.2.7"
+
+[tool.poetry.group.dev.dependencies]
+coverage = "*"
+pytest = ">=3"
+sphinx = "*"
+sphinx_rtd_theme = "*"
+pre-commit = "*"
+wheel = "*"
+setuptools = "*"
+black = "*"
+pylint = "<=2.17.6"
+mypy = "<0.981"
+flake8 = "*"
+nbqa = "*"
+jupyter = "*"
+nbconvert = "*"
+importlib-metadata = "<5.0.0"
+readthedocs_sphinx_ext = "*"
+cmake = "*"
+lxml = "*"
+baostock = "*"
+yahooquery = "*"
+scs = "<=3.2.4"
+beautifulsoup4 = "*"
+tianshou = "<=0.4.10"
+gym = ">=0.24"
+
+[tool.poetry.group.rl.dependencies]
+tianshou = "<=0.4.10"
+torch = "*"
+
+[tool.poetry.scripts]
+qrun = "qlib.workflow.cli:run"
+
 [build-system]
 requires = ["setuptools", "numpy", "Cython"]
