@@ -1,0 +1,85 @@
+qlib_init:
+    provider_uri: "~/.qlib/qlib_data/us_data"
+    region: us
+
+market: &market sp500
+benchmark: &benchmark NVDA
+
+port_analysis_config: &port_analysis_config
+    strategy:
+        class: LLMStrategy
+        module_path: my_research.llm_strategy
+        kwargs:
+            signal: <PRED> # This is the df predicted by the LLM model
+            position_size: 100 # 100 shares
+    backtest:
+        start_time: 2019-06-01
+        end_time: 2020-01-01
+        account: 100000
+        benchmark: *benchmark
+        exchange_kwargs:
+            limit_threshold: 0.095
+            deal_price: close
+            open_cost: 0.0005
+            close_cost: 0.0015
+            min_cost: 5
+
+data_handler_config: &data_handler_config
+    start_time: "2019-01-01"
+    end_time: "2020-01-01"
+    fit_start_time: "2019-01-01"
+    fit_end_time: "2019-05-31"
+    instruments: *market
+    stock_id: "NVDA"
+    infer_processors:
+        - class: RobustZScoreNorm
+          kwargs:
+              fields_group: feature
+        - class: Fillna
+          kwargs:
+              fields_group: feature
+
+task:
+    model:
+        class: LLMForecaster
+        module_path: my_research.llm_model
+        kwargs:
+            base_url: "http://185.150.189.132:8011"
+            auth_token: "EAFramwork@2024"
+            batch_size: 10
+            prompt_template: >-
+                You are a stock market expert. Based on the following market data for NVDA stock, predict the price movement (return) for the next day.
+                The return should be a float number representing percentage change.
+                
+                Market Data:
+                {market_data}
+                
+                Please provide only the numerical prediction (e.g., 0.015 for 1.5% increase).
+    dataset:
+        class: TSDatasetH
+        module_path: qlib.data.dataset
+        kwargs:
+            handler:
+                class: LLMDataHandler
+                module_path: my_research.llm_handler
+                kwargs: *data_handler_config
+            segments:
+                train: [2019-01-01, 2019-05-31]
+                valid: [2019-06-01, 2019-08-31]
+                test: [2019-09-01, 2020-01-01]
+            step_len: 20
+    record: 
+        - class: SignalRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            model: <MODEL>
+            dataset: <DATASET>
+        - class: SigAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            ana_long_short: False
+            ann_scaler: 252
+        - class: PortAnaRecord
+          module_path: qlib.workflow.record_temp
+          kwargs: 
+            config: *port_analysis_config
