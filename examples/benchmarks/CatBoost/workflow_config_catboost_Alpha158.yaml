@@ -35,12 +35,12 @@ task:
         kwargs:
             loss: RMSE
             learning_rate: 0.0421
-            subsample: 0.8789
+            #subsample: 0.8789
             max_depth: 6
             num_leaves: 100
             thread_count: 20
             grow_policy: Lossguide
-            bootstrap_type: Poisson
+            bootstrap_type: Bayesian
     dataset:
         class: DatasetH
         module_path: qlib.data.dataset

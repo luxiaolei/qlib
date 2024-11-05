@@ -2,24 +2,26 @@
 # Licensed under the MIT License.
 
 
-from __future__ import division
-from __future__ import print_function
+from __future__ import division, print_function
+
+import atexit
+import copy
 
 import numpy as np
 import pandas as pd
-import copy
-from ...utils import get_or_create_path
-from ...log import get_module_logger
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from loguru import logger
+from torch.multiprocessing import set_start_method
 from torch.utils.data import DataLoader
 
-from ...model.base import Model
 from ...data.dataset.handler import DataHandlerLP
-from ...model.utils import ConcatDataset
 from ...data.dataset.weight import Reweighter
+from ...log import get_module_logger
+from ...model.base import Model
+from ...model.utils import ConcatDataset
+from ...utils import get_or_create_path
 
 
 class LSTM(Model):
@@ -55,6 +57,36 @@ class LSTM(Model):
         seed=None,
         **kwargs
     ):
+        super().__init__()
+        
+        # Add version-compatible memory management
+        self.memory_status = {
+            'peak_allocated': 0,
+            'current_allocated': 0
+        }
+        
+        def track_memory():
+            if torch.cuda.is_available():
+                try:
+                    # Try newer PyTorch versions
+                    if hasattr(torch.cuda, 'reset_peak_memory_stats'):
+                        self.memory_status['peak_allocated'] = torch.cuda.max_memory_allocated()
+                        self.memory_status['current_allocated'] = torch.cuda.memory_allocated()
+                except AttributeError:
+                    # Fallback for older PyTorch versions
+                    self.logger.warning("Advanced CUDA memory tracking not available in this PyTorch version")
+                    try:
+                        self.memory_status['current_allocated'] = torch.cuda.memory_allocated()
+                    except:
+                        pass
+                
+        # Register memory tracking without reset
+        atexit.register(track_memory)
+        
+        # Add safety checks
+        if d_feat <= 0 or hidden_size <= 0 or num_layers <= 0:
+            raise ValueError("Invalid model dimensions")
+
         # Set logger.
         self.logger = get_module_logger("LSTM")
         self.logger.info("LSTM pytorch version...")
@@ -71,7 +103,12 @@ class LSTM(Model):
         self.early_stop = early_stop
         self.optimizer = optimizer.lower()
         self.loss = loss
-        self.device = torch.device("cuda:%d" % (GPU) if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        if torch.cuda.is_available() and GPU >= 0:
+            self.device = torch.device(f"cuda:{GPU}")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         self.n_jobs = n_jobs
         self.seed = seed
 
@@ -114,12 +151,21 @@ class LSTM(Model):
             np.random.seed(self.seed)
             torch.manual_seed(self.seed)
 
+        # Ensure model is created on CPU first
         self.LSTM_model = LSTMModel(
             d_feat=self.d_feat,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             dropout=self.dropout,
-        ).to(self.device)
+        )
+        
+        # Then safely move to device
+        try:
+            self.LSTM_model = self.LSTM_model.to(self.device)
+        except RuntimeError as e:
+            self.logger.error(f"Failed to move model to device: {e}")
+            raise
+
         if optimizer.lower() == "adam":
             self.train_optimizer = optim.Adam(self.LSTM_model.parameters(), lr=self.lr)
         elif optimizer.lower() == "gd":
@@ -129,6 +175,14 @@ class LSTM(Model):
 
         self.fitted = False
         self.LSTM_model.to(self.device)
+
+        # Add gradient scaler for mixed precision training
+        self.scaler = torch.cuda.amp.GradScaler() if self.device.type == 'cuda' else None
+
+        try:
+            set_start_method('spawn', force=True)
+        except RuntimeError:
+            pass
 
     @property
     def use_gpu(self):
@@ -157,20 +211,51 @@ class LSTM(Model):
 
         raise ValueError("unknown metric `%s`" % self.metric)
 
+    @logger.catch
     def train_epoch(self, data_loader):
         self.LSTM_model.train()
-
+        total_loss = 0
+        
         for data, weight in data_loader:
-            feature = data[:, :, 0:-1].to(self.device)
-            label = data[:, -1, -1].to(self.device)
+            try:
+                if data is None or len(data) == 0:
+                    continue
+                feature = data[:, :, 0:-1].to(self.device)
+                label = data[:, -1, -1].to(self.device)
+                
+                # Clear gradients
+                self.train_optimizer.zero_grad(set_to_none=True)
+                
+                if self.device.type == 'cuda':
+                    with torch.cuda.amp.autocast():
+                        pred = self.LSTM_model(feature.float())
+                        loss = self.loss_fn(pred, label, weight.to(self.device))
+                    
+                    # Use gradient scaling
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.train_optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.LSTM_model.parameters(), 3.0)
+                    self.scaler.step(self.train_optimizer)
+                    self.scaler.update()
+                else:
+                    pred = self.LSTM_model(feature.float())
+                    loss = self.loss_fn(pred, label, weight.to(self.device))
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.LSTM_model.parameters(), 3.0)
+                    self.train_optimizer.step()
+                
+                total_loss += loss.item()
+                
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    self.logger.warning("OOM detected, attempting to recover...")
+                    continue
+                else:
+                    raise e
 
-            pred = self.LSTM_model(feature.float())
-            loss = self.loss_fn(pred, label, weight.to(self.device))
-
-            self.train_optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_value_(self.LSTM_model.parameters(), 3.0)
-            self.train_optimizer.step()
+        return total_loss / len(data_loader)
 
     def test_epoch(self, data_loader):
         self.LSTM_model.eval()
@@ -192,6 +277,7 @@ class LSTM(Model):
 
         return np.mean(losses), np.mean(scores)
 
+    @logger.catch
     def fit(
         self,
         dataset,
@@ -199,8 +285,15 @@ class LSTM(Model):
         save_path=None,
         reweighter=None,
     ):
-        dl_train = dataset.prepare("train", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
-        dl_valid = dataset.prepare("valid", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+        # Protect against data loading issues
+        try:
+            dl_train = dataset.prepare("train", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+            dl_valid = dataset.prepare("valid", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L)
+        except Exception as e:
+            self.logger.error(f"Data preparation failed: {e}")
+            raise
+
+        # Verify data is not empty
         if dl_train.empty or dl_valid.empty:
             raise ValueError("Empty data from dataset, please check your dataset config.")
 
@@ -216,19 +309,22 @@ class LSTM(Model):
         else:
             raise ValueError("Unsupported reweighter type.")
 
+        # Use safer DataLoader configuration
         train_loader = DataLoader(
             ConcatDataset(dl_train, wl_train),
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.n_jobs,
+            num_workers=0,  # Set to 0 to avoid multiprocessing issues
             drop_last=True,
+            generator=torch.Generator(device='cpu')  # Ensure generator is on CPU
         )
         valid_loader = DataLoader(
             ConcatDataset(dl_valid, wl_valid),
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.n_jobs,
+            num_workers=0,  # Set to 0 to avoid multiprocessing issues
             drop_last=True,
+            generator=torch.Generator(device='cpu')  # Ensure generator is on CPU
         )
 
         save_path = get_or_create_path(save_path)
@@ -240,38 +336,57 @@ class LSTM(Model):
         evals_result["train"] = []
         evals_result["valid"] = []
 
+        # Add cleanup handler
+        def cleanup():
+            for loader in [train_loader, valid_loader]:
+                if hasattr(loader, '_iterator') and loader._iterator is not None:
+                    loader._iterator._shutdown_workers()
+
+        atexit.register(cleanup)
+
         # train
         self.logger.info("training...")
         self.fitted = True
 
-        for step in range(self.n_epochs):
-            self.logger.info("Epoch%d:", step)
-            self.logger.info("training...")
-            self.train_epoch(train_loader)
-            self.logger.info("evaluating...")
-            train_loss, train_score = self.test_epoch(train_loader)
-            val_loss, val_score = self.test_epoch(valid_loader)
-            self.logger.info("train %.6f, valid %.6f" % (train_score, val_score))
-            evals_result["train"].append(train_score)
-            evals_result["valid"].append(val_score)
+        # Add try-except block around the training loop
+        try:
+            for step in range(self.n_epochs):
+                self.logger.info("Epoch%d:", step)
+                self.logger.info("training...")
+                train_loss = self.train_epoch(train_loader)
+                self.logger.info("evaluating...")
+                
+                with torch.no_grad():
+                    train_loss, train_score = self.test_epoch(train_loader)
+                    val_loss, val_score = self.test_epoch(valid_loader)
+                
+                self.logger.info("train %.6f, valid %.6f" % (train_score, val_score))
+                evals_result["train"].append(train_score)
+                evals_result["valid"].append(val_score)
 
-            if val_score > best_score:
-                best_score = val_score
-                stop_steps = 0
-                best_epoch = step
-                best_param = copy.deepcopy(self.LSTM_model.state_dict())
-            else:
-                stop_steps += 1
-                if stop_steps >= self.early_stop:
-                    self.logger.info("early stop")
-                    break
+                if val_score > best_score:
+                    best_score = val_score
+                    stop_steps = 0
+                    best_epoch = step
+                    best_param = copy.deepcopy(self.LSTM_model.state_dict())
+                else:
+                    stop_steps += 1
+                    if stop_steps >= self.early_stop:
+                        self.logger.info("early stop")
+                        break
 
-        self.logger.info("best score: %.6lf @ %d" % (best_score, best_epoch))
-        self.LSTM_model.load_state_dict(best_param)
-        torch.save(best_param, save_path)
+            self.logger.info("best score: %.6lf @ %d" % (best_score, best_epoch))
+            self.LSTM_model.load_state_dict(best_param)
+            torch.save(best_param, save_path)
 
-        if self.use_gpu:
-            torch.cuda.empty_cache()
+        except Exception as e:
+            self.logger.error(f"Training failed with error: {str(e)}")
+            raise
+        finally:
+            cleanup()
+            atexit.unregister(cleanup)
+            if self.use_gpu:
+                torch.cuda.empty_cache()
 
     def predict(self, dataset):
         if not self.fitted:
@@ -279,19 +394,37 @@ class LSTM(Model):
 
         dl_test = dataset.prepare("test", col_set=["feature", "label"], data_key=DataHandlerLP.DK_I)
         dl_test.config(fillna_type="ffill+bfill")
-        test_loader = DataLoader(dl_test, batch_size=self.batch_size, num_workers=self.n_jobs)
-        self.LSTM_model.eval()
-        preds = []
+        
+        # Modify test DataLoader
+        test_loader = DataLoader(
+            dl_test, 
+            batch_size=self.batch_size, 
+            num_workers=self.n_jobs,
+            persistent_workers=True,
+            pin_memory=True,
+        )
 
-        for data in test_loader:
-            feature = data[:, :, 0:-1].to(self.device)
+        # Add cleanup handler
+        def cleanup():
+            if hasattr(test_loader, '_iterator') and test_loader._iterator is not None:
+                test_loader._iterator._shutdown_workers()
 
-            with torch.no_grad():
-                pred = self.LSTM_model(feature.float()).detach().cpu().numpy()
+        atexit.register(cleanup)
 
-            preds.append(pred)
+        try:
+            self.LSTM_model.eval()
+            preds = []
 
-        return pd.Series(np.concatenate(preds), index=dl_test.get_index())
+            for data in test_loader:
+                feature = data[:, :, 0:-1].to(self.device)
+                with torch.no_grad():
+                    pred = self.LSTM_model(feature.float()).detach().cpu().numpy()
+                preds.append(pred)
+
+            return pd.Series(np.concatenate(preds), index=dl_test.get_index())
+        finally:
+            cleanup()
+            atexit.unregister(cleanup)
 
 
 class LSTMModel(nn.Module):

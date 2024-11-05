@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft Corporation.
-import os
-from torch.utils.data import Dataset, DataLoader
-
 import copy
+import os
 from typing import Text, Union
 
 import numpy as np
@@ -12,6 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Function
+from torch.utils.data import DataLoader, Dataset
+
 from qlib.contrib.model.pytorch_utils import count_parameters
 from qlib.data.dataset import DatasetH
 from qlib.data.dataset.handler import DataHandlerLP
@@ -81,7 +81,7 @@ class ADARNN(Model):
         self.optimizer = optimizer.lower()
         self.loss = loss
         self.n_splits = n_splits
-        self.device = torch.device("cuda:%d" % GPU if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        self.device = torch.device("cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         self.seed = seed
 
         self.logger.info(
@@ -397,7 +397,7 @@ class AdaRNN(nn.Module):
         self.model_type = model_type
         self.trans_loss = trans_loss
         self.len_seq = len_seq
-        self.device = torch.device("cuda:%d" % GPU if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        self.device = torch.device("cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         in_size = self.n_input
 
         features = nn.ModuleList()
@@ -559,7 +559,7 @@ class TransferLoss:
         """
         self.loss_type = loss_type
         self.input_dim = input_dim
-        self.device = torch.device("cuda:%d" % GPU if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        self.device = torch.device("cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
     def compute(self, X, Y):
         """Compute adaptation loss

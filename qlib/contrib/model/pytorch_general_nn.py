@@ -1,32 +1,25 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
-from __future__ import division
-from __future__ import print_function
+from __future__ import division, print_function
 
-from torch.utils.data import DataLoader
-
+import copy
+from typing import Union
 
 import numpy as np
 import pandas as pd
-from typing import Union
-import copy
-
 import torch
 import torch.optim as optim
+from torch.utils.data import DataLoader
 
 from qlib.data.dataset.weight import Reweighter
 
-from .pytorch_utils import count_parameters
-from ...model.base import Model
 from ...data.dataset import DatasetH, TSDatasetH
 from ...data.dataset.handler import DataHandlerLP
-from ...utils import (
-    init_instance_by_config,
-    get_or_create_path,
-)
 from ...log import get_module_logger
-
+from ...model.base import Model
 from ...model.utils import ConcatDataset
+from ...utils import get_or_create_path, init_instance_by_config
+from .pytorch_utils import count_parameters
 
 
 class GeneralPTNN(Model):
@@ -82,7 +75,7 @@ class GeneralPTNN(Model):
         self.optimizer = optimizer.lower()
         self.loss = loss
         self.weight_decay = weight_decay
-        self.device = torch.device("cuda:%d" % (GPU) if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        self.device = torch.device("cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         self.n_jobs = n_jobs
         self.seed = seed
 
@@ -183,13 +176,13 @@ class GeneralPTNN(Model):
         Tuple[torch.Tensor, torch.Tensor]
         """
         if data.dim() == 3:
-            # it is a time series dataset
-            feature = data[:, :, 0:-1].to(self.device)
-            label = data[:, -1, -1].to(self.device)
+            # Convert to float32 for MPS compatibility
+            feature = data[:, :, 0:-1].to(self.device).float()
+            label = data[:, -1, -1].to(self.device).float()
         elif data.dim() == 2:
-            # it is a tabular dataset
-            feature = data[:, 0:-1].to(self.device)
-            label = data[:, -1].to(self.device)
+            # Convert to float32 for MPS compatibility
+            feature = data[:, 0:-1].to(self.device).float()
+            label = data[:, -1].to(self.device).float()
         else:
             raise ValueError("Unsupported data shape.")
         return feature, label
@@ -199,9 +192,11 @@ class GeneralPTNN(Model):
 
         for data, weight in data_loader:
             feature, label = self._get_fl(data)
-
-            pred = self.dnn_model(feature.float())
-            loss = self.loss_fn(pred, label, weight.to(self.device))
+            # Convert weight to float32 for MPS compatibility
+            weight = weight.to(self.device).float()
+            
+            pred = self.dnn_model(feature)
+            loss = self.loss_fn(pred, label, weight)
 
             self.train_optimizer.zero_grad()
             loss.backward()
@@ -216,10 +211,12 @@ class GeneralPTNN(Model):
 
         for data, weight in data_loader:
             feature, label = self._get_fl(data)
+            # Convert weight to float32 for MPS compatibility
+            weight = weight.to(self.device).float()
 
             with torch.no_grad():
-                pred = self.dnn_model(feature.float())
-                loss = self.loss_fn(pred, label, weight.to(self.device))
+                pred = self.dnn_model(feature)
+                loss = self.loss_fn(pred, label, weight)
                 losses.append(loss.item())
 
                 score = self.metric_fn(pred, label)
@@ -242,11 +239,13 @@ class GeneralPTNN(Model):
             raise ValueError("Empty data from dataset, please check your dataset config.")
 
         if reweighter is None:
-            wl_train = np.ones(len(dl_train))
-            wl_valid = np.ones(len(dl_valid))
+            # Initialize weights as float32
+            wl_train = np.ones(len(dl_train), dtype=np.float32)
+            wl_valid = np.ones(len(dl_valid), dtype=np.float32)
         elif isinstance(reweighter, Reweighter):
-            wl_train = reweighter.reweight(dl_train)
-            wl_valid = reweighter.reweight(dl_valid)
+            # Convert reweighter output to float32
+            wl_train = reweighter.reweight(dl_train).astype(np.float32)
+            wl_valid = reweighter.reweight(dl_valid).astype(np.float32)
         else:
             raise ValueError("Unsupported reweighter type.")
 
@@ -256,16 +255,25 @@ class GeneralPTNN(Model):
             dl_valid.config(fillna_type="ffill+bfill")  # process nan brought by dataloader
         else:
             # If it is a tabular, we convert the dataframe to numpy to be indexable by DataLoader
-            dl_train = dl_train.values
-            dl_valid = dl_valid.values
+            dl_train = dl_train.values.astype(np.float32)
+            dl_valid = dl_valid.values.astype(np.float32)
 
         train_loader = DataLoader(
             ConcatDataset(dl_train, wl_train),
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.n_jobs,
+            num_workers=0,
             drop_last=True,
         )
+        
+        print('train_loader debug:')
+        try:
+            for data, weight in train_loader:
+                print(data.shape, weight.shape)
+                break
+        except Exception as e:
+            print(e)
+        
         valid_loader = DataLoader(
             ConcatDataset(dl_valid, wl_valid),
             batch_size=self.batch_size,

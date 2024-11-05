@@ -1,9 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from __future__ import division
-from __future__ import print_function
-
+from __future__ import division, print_function
 
 import copy
 import math
@@ -15,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.autograd import Function
+
 from qlib.contrib.model.pytorch_gru import GRUModel
 from qlib.contrib.model.pytorch_lstm import LSTMModel
 from qlib.contrib.model.pytorch_utils import count_parameters
@@ -23,7 +23,6 @@ from qlib.data.dataset.handler import DataHandlerLP
 from qlib.log import get_module_logger
 from qlib.model.base import Model
 from qlib.utils import get_or_create_path
-from torch.autograd import Function
 
 
 class ADD(Model):
@@ -83,7 +82,7 @@ class ADD(Model):
         self.optimizer = optimizer.lower()
         self.base_model = base_model
         self.model_path = model_path
-        self.device = torch.device("cuda:%d" % (GPU) if torch.cuda.is_available() and GPU >= 0 else "cpu")
+        self.device = torch.device("cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
         self.seed = seed
 
         self.gamma = gamma

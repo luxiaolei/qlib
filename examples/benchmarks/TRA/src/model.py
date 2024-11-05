@@ -1,26 +1,24 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import os
-import copy
-import math
-import json
 import collections
+import copy
+import json
+import math
+import os
+
 import numpy as np
 import pandas as pd
-
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-
+import torch.optim as optim
 from tqdm import tqdm
 
-from qlib.utils import get_or_create_path
 from qlib.log import get_module_logger
 from qlib.model.base import Model
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 class TRAModel(Model):

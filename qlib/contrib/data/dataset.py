@@ -2,15 +2,15 @@
 # Licensed under the MIT License.
 
 import copy
-import torch
 import warnings
+
 import numpy as np
 import pandas as pd
+import torch
 
 from qlib.data.dataset import DatasetH
 
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 def _to_tensor(x):

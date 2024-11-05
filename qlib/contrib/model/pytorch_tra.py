@@ -1,19 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import io
-import os
 import copy
-import math
+import io
 import json
+import math
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
+import torch.optim as optim
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -23,11 +23,11 @@ except ImportError:
 from tqdm import tqdm
 
 from qlib.constant import EPS
+from qlib.contrib.data.dataset import MTSDatasetH
 from qlib.log import get_module_logger
 from qlib.model.base import Model
-from qlib.contrib.data.dataset import MTSDatasetH
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cuda:%d" % 0 if torch.cuda.is_available() and 0 >= 0 else "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 class TRAModel(Model):

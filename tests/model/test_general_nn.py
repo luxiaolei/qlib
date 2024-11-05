@@ -1,4 +1,5 @@
 import unittest
+
 from qlib.tests import TestAutoData
 
 
@@ -57,6 +58,7 @@ class TestNN(TestAutoData):
                     "num_layers": 1,
                     "dropout": 0.0,
                 },
+                n_jobs=0,
             ),
             GeneralPTNN(
                 n_epochs=2,
@@ -64,6 +66,7 @@ class TestNN(TestAutoData):
                 pt_model_kwargs={
                     "input_dim": 3,
                 },
+                n_jobs=0,
             ),
         ]
 
@@ -72,5 +75,8 @@ class TestNN(TestAutoData):
             model.predict(ds)  # It works
 
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
+    #multiprocessing.set_start_method('spawn', force=True)
     unittest.main()
+    
