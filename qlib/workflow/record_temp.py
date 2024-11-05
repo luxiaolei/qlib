@@ -3,25 +3,26 @@
 
 import logging
 import warnings
-import pandas as pd
-import numpy as np
-from tqdm import trange
 from pprint import pprint
-from typing import Union, List, Optional, Dict
+from typing import Dict, List, Optional, Union
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from tqdm import trange
 
 from qlib.utils.exceptions import LoadObjectError
-from ..contrib.evaluate import risk_analysis, indicator_analysis
 
+from ..backtest import backtest as normal_backtest
+from ..contrib.eva.alpha import calc_ic, calc_long_short_prec, calc_long_short_return
+from ..contrib.evaluate import indicator_analysis, risk_analysis
 from ..data.dataset import DatasetH
 from ..data.dataset.handler import DataHandlerLP
-from ..backtest import backtest as normal_backtest
 from ..log import get_module_logger
-from ..utils import fill_placeholder, flatten_dict, class_casting, get_date_by_shift
-from ..utils.time import Freq
+from ..utils import class_casting, fill_placeholder, flatten_dict, get_date_by_shift
 from ..utils.data import deepcopy_basic_type
 from ..utils.exceptions import QlibException
-from ..contrib.eva.alpha import calc_ic, calc_long_short_return, calc_long_short_prec
-
+from ..utils.time import Freq
 
 logger = get_module_logger("workflow", logging.INFO)
 
@@ -309,42 +310,53 @@ class SigAnaRecord(ACRecordTemp):
         self.label_col = label_col
 
     def _generate(self, label: Optional[pd.DataFrame] = None, **kwargs):
-        """
-        Parameters
-        ----------
-        label : Optional[pd.DataFrame]
-            Label should be a dataframe.
-        """
         pred = self.load("pred.pkl")
         if label is None:
             label = self.load("label.pkl")
         if label is None or not isinstance(label, pd.DataFrame) or label.empty:
             logger.warning(f"Empty label.")
             return
+            
+        # Calculate IC
         ic, ric = calc_ic(pred.iloc[:, 0], label.iloc[:, self.label_col])
+        
         metrics = {
             "IC": ic.mean(),
             "ICIR": ic.mean() / ic.std(),
             "Rank IC": ric.mean(),
             "Rank ICIR": ric.mean() / ric.std(),
         }
+        
         objects = {"ic.pkl": ic, "ric.pkl": ric}
+        
         if self.ana_long_short:
             long_short_r, long_avg_r = calc_long_short_return(pred.iloc[:, 0], label.iloc[:, self.label_col])
-            metrics.update(
-                {
-                    "Long-Short Ann Return": long_short_r.mean() * self.ann_scaler,
-                    "Long-Short Ann Sharpe": long_short_r.mean() / long_short_r.std() * self.ann_scaler**0.5,
-                    "Long-Avg Ann Return": long_avg_r.mean() * self.ann_scaler,
-                    "Long-Avg Ann Sharpe": long_avg_r.mean() / long_avg_r.std() * self.ann_scaler**0.5,
-                }
-            )
-            objects.update(
-                {
-                    "long_short_r.pkl": long_short_r,
-                    "long_avg_r.pkl": long_avg_r,
-                }
-            )
+            
+            # Create returns plot
+            fig_returns = go.Figure()
+            fig_returns.add_trace(go.Scatter(x=long_short_r.index, y=long_short_r.cumsum(), 
+                                           mode='lines', name='Long-Short Cumulative Return'))
+            fig_returns.add_trace(go.Scatter(x=long_avg_r.index, y=long_avg_r.cumsum(), 
+                                           mode='lines', name='Long-Avg Cumulative Return'))
+            fig_returns.update_layout(title='Cumulative Returns', 
+                                    xaxis_title='Date',
+                                    yaxis_title='Cumulative Return')
+                                    
+            # Log the plotly figure
+            self.recorder.log_plotly_figure(fig_returns, "returns_time_series.html")
+            
+            metrics.update({
+                "Long-Short Ann Return": long_short_r.mean() * self.ann_scaler,
+                "Long-Short Ann Sharpe": long_short_r.mean() / long_short_r.std() * self.ann_scaler**0.5,
+                "Long-Avg Ann Return": long_avg_r.mean() * self.ann_scaler,
+                "Long-Avg Ann Sharpe": long_avg_r.mean() / long_avg_r.std() * self.ann_scaler**0.5,
+            })
+            objects.update({
+                "long_short_r.pkl": long_short_r,
+                "long_avg_r.pkl": long_avg_r,
+            })
+            
+        # Log metrics using recorder
         self.recorder.log_metrics(**metrics)
         pprint(metrics)
         return objects
@@ -505,6 +517,19 @@ class PortAnaRecord(ACRecordTemp):
                 analysis["excess_return_with_cost"] = risk_analysis(
                     report_normal["return"] - report_normal["bench"] - report_normal["cost"], freq=_analysis_freq
                 )
+
+                # Create performance plot
+                fig_perf = go.Figure()
+                fig_perf.add_trace(go.Scatter(x=report_normal.index, y=(1 + report_normal["return"]).cumprod(), 
+                                            mode='lines', name='Strategy'))
+                fig_perf.add_trace(go.Scatter(x=report_normal.index, y=(1 + report_normal["bench"]).cumprod(), 
+                                            mode='lines', name='Benchmark'))
+                fig_perf.update_layout(title=f'Cumulative Performance ({_analysis_freq})', 
+                                     xaxis_title='Date',
+                                     yaxis_title='Cumulative Return')
+                                     
+                # Log the plotly figure
+                self.recorder.log_plotly_figure(fig_perf, f"performance_{_analysis_freq}.html")
 
                 analysis_df = pd.concat(analysis)  # type: pd.DataFrame
                 # log metrics

@@ -2,22 +2,23 @@
 # Licensed under the MIT License.
 
 import os
-import sys
-from typing import Optional
-import mlflow
-import shutil
 import pickle
-import tempfile
+import shutil
 import subprocess
-from pathlib import Path
+import sys
+import tempfile
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
-from qlib.utils.serial import Serializable
+import mlflow
+from mlflow.store.artifact.azure_blob_artifact_repo import AzureBlobArtifactRepository
+
 from qlib.utils.exceptions import LoadObjectError
 from qlib.utils.paral import AsyncCaller
+from qlib.utils.serial import Serializable
 
 from ..log import TimeInspector, get_module_logger
-from mlflow.store.artifact.azure_blob_artifact_repo import AzureBlobArtifactRepository
 
 logger = get_module_logger("workflow")
 # mlflow limits the length of log_param to 500, but this caused errors when using qrun, so we extended the mlflow limit.
@@ -241,6 +242,12 @@ class Recorder:
         A dictionary of tags that being stored.
         """
         raise NotImplementedError(f"Please implement the `list_tags` method.")
+
+    def log_plotly_figure(self, figure, artifact_name: str):
+        """
+        Log a plotly figure as an HTML artifact.
+        """
+        raise NotImplementedError(f"Please implement the `log_plotly_figure` method.")
 
 
 class MLflowRecorder(Recorder):
@@ -487,3 +494,27 @@ class MLflowRecorder(Recorder):
     def list_tags(self):
         run = self.client.get_run(self.id)
         return run.data.tags
+
+    def log_plotly_figure(self, figure, artifact_name: str):
+        """
+        Log a plotly figure as an HTML artifact.
+
+        Parameters
+        ----------
+        figure : plotly.graph_objs.Figure
+            The plotly figure to log
+        artifact_name : str
+            Name of the artifact. If it doesn't end with .html, '.html' will be appended.
+        """
+        # Ensure the artifact name ends with .html
+        if not artifact_name.endswith('.html'):
+            artifact_name = f'{artifact_name}.html'
+            
+        # Create a temporary file to save the HTML
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+            figure.write_html(f.name)
+            # Log the file as an artifact
+            self.log_artifact(f.name, artifact_name)
+            
+        # Clean up the temporary file
+        os.unlink(f.name)
