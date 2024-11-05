@@ -2,6 +2,8 @@
 # Licensed under the MIT License.
 import os
 import numpy
+import platform
+import subprocess
 
 from setuptools import find_packages, setup, Extension
 
@@ -98,21 +100,80 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 
-# Cython Extensions
+def get_macos_sdk_path():
+    """Get the macOS SDK path for proper header inclusion."""
+    try:
+        sdk_path = subprocess.check_output(['xcrun', '--show-sdk-path']).decode('utf-8').strip()
+        return sdk_path
+    except:
+        return None
+
+# Base compiler and linker arguments
+base_compile_args = [
+    "-stdlib=libc++",
+    "-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION",
+    "-std=c++14",  # Explicitly use C++14
+    "-mmacosx-version-min=11.0",
+    "-Wall",
+    "-O3",
+    "-D_LIBCPP_ENABLE_CXX17_REMOVED_FEATURES=1",
+    "-include", "cstddef",  # Explicitly include cstddef for nullptr_t
+    "-D__GLIBCXX_USE_CXX11_ABI=1",  # Enable C++11 ABI
+]
+
+base_link_args = [
+    "-stdlib=libc++",
+    "-mmacosx-version-min=11.0",
+]
+
+# Initialize extensions with base configuration
 extensions = [
     Extension(
         "qlib.data._libs.rolling",
         ["qlib/data/_libs/rolling.pyx"],
         language="c++",
-        include_dirs=[NUMPY_INCLUDE],
+        include_dirs=[
+            NUMPY_INCLUDE,
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1",
+        ],
+        extra_compile_args=base_compile_args.copy(),
+        extra_link_args=base_link_args.copy(),
     ),
     Extension(
         "qlib.data._libs.expanding",
         ["qlib/data/_libs/expanding.pyx"],
         language="c++",
-        include_dirs=[NUMPY_INCLUDE],
+        include_dirs=[
+            NUMPY_INCLUDE,
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1",
+        ],
+        extra_compile_args=base_compile_args.copy(),
+        extra_link_args=base_link_args.copy(),
     ),
 ]
+
+# Add macOS specific configurations
+if platform.system() == "Darwin":
+    sdk_path = get_macos_sdk_path()
+    if sdk_path:
+        for ext in extensions:
+            # Add system include paths
+            ext.extra_compile_args.extend([
+                f"-isystem{sdk_path}/usr/include",
+                f"-isystem{sdk_path}/usr/include/c++/v1",
+                "-include", f"{sdk_path}/usr/include/c++/v1/cstddef",  # Include cstddef for nullptr_t
+            ])
+            
+            # Add architecture-specific flags for Apple Silicon
+            if platform.machine() == 'arm64':
+                ext.extra_compile_args.extend([
+                    "-arch", "arm64",
+                ])
+                ext.extra_link_args.extend([
+                    "-arch", "arm64",
+                ])
 
 # Where the magic happens:
 setup(
