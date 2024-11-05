@@ -1,27 +1,28 @@
 #  Copyright (c) Microsoft Corporation.
 #  Licensed under the MIT License.
 
-import os
-import sys
-import fire
-import time
+import functools
 import glob
-import yaml
+import inspect
+import os
 import shutil
 import signal
-import inspect
-import tempfile
-import functools
 import statistics
 import subprocess
+import sys
+import tempfile
+import time
 from datetime import datetime
-from pathlib import Path
 from operator import xor
+from pathlib import Path
 from pprint import pprint
 
+import fire
+import yaml
+
 import qlib
-from qlib.workflow import R
 from qlib.tests.data import GetData
+from qlib.workflow import R
 
 
 # decorator to check the arguments
@@ -63,23 +64,20 @@ def cal_mean_std(results) -> dict:
 
 # function to create the environment ofr an anaconda environment
 def create_env():
-    # create env
+    """Create a new Poetry virtual environment for running models.
+    
+    Returns:
+        tuple: (temp_dir, env_path, python_path, None)
+    """
+    # Create temp directory for organizing files
     temp_dir = tempfile.mkdtemp()
     env_path = Path(temp_dir).absolute()
-    sys.stderr.write(f"Creating Virtual Environment with path: {env_path}...\n")
+    sys.stderr.write(f"Creating working directory: {env_path}...\n")
     
-    # Install system dependencies first
-    #execute("sudo apt-get update", wait_when_err=True)
-    #execute("sudo apt-get install -y libopenblas-dev libblas-dev liblapack-dev gfortran", wait_when_err=True)
+    # Use the current Python interpreter
+    python_path = sys.executable
     
-    # Create conda environment
-    execute(f"conda create --prefix {env_path} python=3.8 -y")
-    python_path = env_path / "bin" / "python"
-    sys.stderr.write("\n")
-    
-    # get anaconda activate path
-    conda_activate = Path(os.environ["CONDA_PREFIX"]) / "bin" / "activate"
-    return temp_dir, env_path, python_path, conda_activate
+    return temp_dir, env_path, python_path, None
 
 
 # function to execute the cmd
@@ -124,17 +122,33 @@ def get_all_folders(models, exclude) -> dict:
 
 
 # function to get all the files under the model folder
-def get_all_files(folder_path, dataset, universe="") -> (str, str):
-    if universe != "":
-        universe = f"_{universe}"
-    yaml_path = str(Path(f"{folder_path}") / f"*{dataset}{universe}.yaml")
+def get_all_files(folder_path, dataset=None, universe="", all_yaml=False) -> (list, str):
+    """Get YAML and requirement files from the model folder.
+    
+    Args:
+        folder_path (str): Path to the model folder
+        dataset (str, optional): Dataset name to filter YAML files. If None, all datasets are included.
+        universe (str): Universe name to filter YAML files
+        all_yaml (bool): If True, return all YAML files regardless of dataset/universe
+    
+    Returns:
+        tuple: (list of YAML files, requirements file path)
+    """
+    if all_yaml or dataset is None:
+        yaml_path = str(Path(f"{folder_path}") / f"*.yaml")
+    else:
+        if universe != "":
+            universe = f"_{universe}"
+        yaml_path = str(Path(f"{folder_path}") / f"*{dataset}{universe}.yaml")
+    
     req_path = str(Path(f"{folder_path}") / f"*.txt")
-    yaml_file = glob.glob(yaml_path)
+    yaml_files = glob.glob(yaml_path)
     req_file = glob.glob(req_path)
-    if len(yaml_file) == 0:
+    
+    if len(yaml_files) == 0:
         return None, None
     else:
-        return yaml_file[0], req_file[0]
+        return yaml_files, req_file[0] if req_file else None
 
 
 # function to retrieve all the results
@@ -232,13 +246,14 @@ class ModelRunner:
         self,
         times=1,
         models=None,
-        dataset="Alpha360",
+        dataset=None,
         universe="",
         exclude=False,
-        qlib_uri: str = "git+https://github.com/microsoft/qlib#egg=pyqlib",
+        qlib_uri: str = "git+https://github.com/luxiaolei/qlib#egg=pyqlib",
         exp_folder_name: str = "run_all_model_records",
         wait_before_rm_env: bool = False,
         wait_when_err: bool = False,
+        all_yaml: bool = False,
     ):
         """
         Please be aware that this function can only work under Linux. MacOS and Windows will be supported in the future.
@@ -253,8 +268,8 @@ class ModelRunner:
             determines the specific model or list of models to run or exclude.
         exclude : boolean
             determines whether the model being used is excluded or included.
-        dataset : str
-            determines the dataset to be used for each model.
+        dataset : str, optional
+            determines the dataset to be used for each model. If None, all datasets will be used.
         universe  : str
             the stock universe of the dataset.
             default "" indicates that
@@ -304,8 +319,18 @@ class ModelRunner:
             # Case 7 - run lightgbm model on csi500.
             python run_all_model.py run 3 lightgbm Alpha158 csi500
 
+            # Case 8 - run all models with all datasets
+            python run_all_model.py run
+
+            # Case 9 - run specific model with all datasets
+            python run_all_model.py run --models=lightgbm
+
         """
-        self._init_qlib(exp_folder_name)
+        try:
+            self._init_qlib(exp_folder_name)
+        except Exception as e:
+            sys.stderr.write(f"Failed to initialize qlib: {str(e)}\n")
+            return
 
         # get all folders
         folders = get_all_folders(models, exclude)
@@ -313,74 +338,67 @@ class ModelRunner:
         errors = dict()
         # run all the model for iterations
         for fn in folders:
-            # get all files
-            sys.stderr.write("Retrieving files...\n")
-            yaml_path, req_path = get_all_files(folders[fn], dataset, universe=universe)
-            if yaml_path is None:
-                sys.stderr.write(f"There is no {dataset}.yaml file in {folders[fn]}")
+            try:
+                # get all files
+                sys.stderr.write("Retrieving files...\n")
+                yaml_paths, req_path = get_all_files(folders[fn], dataset, universe=universe, all_yaml=all_yaml)
+                if yaml_paths is None:
+                    sys.stderr.write(f"There are no YAML files in {folders[fn]}\n")
+                    continue
+                
+                # Create temp directory for organizing files
+                temp_dir, env_path, python_path, _ = create_env()
+                
+                # Track results by dataset
+                dataset_results = {}
+                
+                # Process each YAML file
+                for yaml_path in (yaml_paths if isinstance(yaml_paths, list) else [yaml_paths]):
+                    current_dataset = self._get_dataset_name(yaml_path)
+                    sys.stderr.write(f"Processing dataset: {current_dataset}\n")
+                    
+                    # read yaml, remove seed kwargs of model, and then save file in the temp_dir
+                    processed_yaml_path = gen_yaml_file_without_seed_kwargs(yaml_path, temp_dir)
+                    
+                    # Run the model using current environment
+                    yaml_name = Path(yaml_path).name
+                    sys.stderr.write(f"Running the model: {fn} with config: {yaml_name}...\n")
+                    
+                    # Run the model using current environment
+                    sys.stderr.write(f"Running the model: {fn}...\n")
+                    for i in range(times):
+                        try:
+                            sys.stderr.write(f"Running iteration {i+1}...\n")
+                            cmd = f"qrun {processed_yaml_path}"
+                            errs = execute(
+                                cmd,
+                                wait_when_err=wait_when_err,
+                            )
+                            if errs is not None:
+                                _errs = errors.get(fn, {})
+                                _errs.update({i: errs})
+                                errors[fn] = _errs
+                            sys.stderr.write("\n")
+                        except Exception as e:
+                            sys.stderr.write(f"Failed iteration {i+1} for model {fn}: {str(e)}\n")
+                            continue
+                
+                # Clean up temp directory
+                shutil.rmtree(temp_dir)
+
+                # Generate results for each dataset
+                for current_dataset, results in dataset_results.items():
+                    if len(results) > 0:
+                        results = cal_mean_std(results)
+                        gen_and_save_md_table(results, current_dataset)
+                        # Move results with dataset-specific naming
+                        result_path = f"table_{current_dataset}_{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}.md"
+                        shutil.move("table.md", result_path)
+
+            except Exception as e:
+                sys.stderr.write(f"Failed to run model {fn}: {str(e)}\n")
                 continue
-            sys.stderr.write("\n")
-            # create env by anaconda
-            temp_dir, env_path, python_path, conda_activate = create_env()
 
-            # install requirements.txt
-            sys.stderr.write("Installing requirements.txt...\n")
-            with open(req_path) as f:
-                content = f.read()
-            if "torch" in content:
-                # automatically install pytorch according to nvidia's version
-                execute(
-                    f"{python_path} -m pip install light-the-torch", wait_when_err=wait_when_err
-                )  # for automatically installing torch according to the nvidia driver
-                execute(
-                    f"{env_path / 'bin' / 'ltt'} install -r {req_path}",
-                    wait_when_err=wait_when_err,
-                )
-            else:
-                execute(f"{python_path} -m pip install -r {req_path}", wait_when_err=wait_when_err)
-            sys.stderr.write("\n")
-
-            # read yaml, remove seed kwargs of model, and then save file in the temp_dir
-            yaml_path = gen_yaml_file_without_seed_kwargs(yaml_path, temp_dir)
-            # setup gpu for tft
-            if fn == "TFT":
-                execute(
-                    f"conda install -y --prefix {env_path} anaconda cudatoolkit=10.0 && conda install -y --prefix {env_path} cudnn",
-                    wait_when_err=wait_when_err,
-                )
-                sys.stderr.write("\n")
-            # install qlib
-            sys.stderr.write("Installing qlib...\n")
-            execute(f"{python_path} -m pip install --upgrade pip", wait_when_err=wait_when_err)  # TODO: FIX ME!
-            execute(f"{python_path} -m pip install --upgrade cython", wait_when_err=wait_when_err)  # TODO: FIX ME!
-            if fn == "TFT":
-                execute(
-                    f"cd {env_path} && {python_path} -m pip install --upgrade --force-reinstall --ignore-installed PyYAML -e {qlib_uri}",
-                    wait_when_err=wait_when_err,
-                )  # TODO: FIX ME!
-            else:
-                execute(
-                    f"cd {env_path} && {python_path} -m pip install --upgrade --force-reinstall -e {qlib_uri}",
-                    wait_when_err=wait_when_err,
-                )  # TODO: FIX ME!
-            sys.stderr.write("\n")
-            # run workflow_by_config for multiple times
-            for i in range(times):
-                sys.stderr.write(f"Running the model: {fn} for iteration {i+1}...\n")
-                errs = execute(
-                    f"{python_path} {env_path / 'bin' / 'qrun'} {yaml_path} {fn} {exp_folder_name}",
-                    wait_when_err=wait_when_err,
-                )
-                if errs is not None:
-                    _errs = errors.get(fn, {})
-                    _errs.update({i: errs})
-                    errors[fn] = _errs
-                sys.stderr.write("\n")
-            # remove env
-            sys.stderr.write(f"Deleting the environment: {env_path}...\n")
-            if wait_before_rm_env:
-                input("Press Enter to Continue")
-            shutil.rmtree(env_path)
         # print errors
         sys.stderr.write(f"Here are some of the errors of the models...\n")
         pprint(errors)
@@ -401,8 +419,17 @@ class ModelRunner:
             sys.stderr.write("\n")
         sys.stderr.write("\n")
         # move results folder
-        shutil.move(exp_folder_name, exp_folder_name + f"_{dataset}_{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}")
-        shutil.move("table.md", f"table_{dataset}_{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}.md")
+        shutil.move(exp_folder_name, exp_folder_name + f"_all_{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}")
+        shutil.move("table.md", f"table_all_{datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}.md")
+
+    def _get_dataset_name(self, yaml_path):
+        """Extract dataset name from YAML file path."""
+        filename = Path(yaml_path).stem
+        # Assuming format: workflow_config_modelname_datasetname[_universe]
+        parts = filename.split('_')
+        if len(parts) >= 4:
+            return parts[3]  # Return dataset name part
+        return "unknown"
 
 
 if __name__ == "__main__":
