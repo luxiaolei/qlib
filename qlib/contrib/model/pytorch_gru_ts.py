@@ -164,11 +164,12 @@ class GRU(Model):
         self.GRU_model.train()
 
         for data, weight in data_loader:
-            feature = data[:, :, 0:-1].to(self.device)
-            label = data[:, -1, -1].to(self.device)
+            feature = data[:, :, 0:-1].float().to(self.device)
+            label = data[:, -1, -1].float().to(self.device)
+            weight = weight.float().to(self.device)
 
-            pred = self.GRU_model(feature.float())
-            loss = self.loss_fn(pred, label, weight.to(self.device))
+            pred = self.GRU_model(feature)
+            loss = self.loss_fn(pred, label, weight)
 
             self.train_optimizer.zero_grad()
             loss.backward()
@@ -182,13 +183,13 @@ class GRU(Model):
         losses = []
 
         for data, weight in data_loader:
-            feature = data[:, :, 0:-1].to(self.device)
-            # feature[torch.isnan(feature)] = 0
-            label = data[:, -1, -1].to(self.device)
+            feature = data[:, :, 0:-1].float().to(self.device)
+            label = data[:, -1, -1].float().to(self.device)
+            weight = weight.float().to(self.device)
 
             with torch.no_grad():
-                pred = self.GRU_model(feature.float())
-                loss = self.loss_fn(pred, label, weight.to(self.device))
+                pred = self.GRU_model(feature)
+                loss = self.loss_fn(pred, label, weight)
                 losses.append(loss.item())
 
                 score = self.metric_fn(pred, label)
@@ -291,7 +292,7 @@ class GRU(Model):
             feature = data[:, :, 0:-1].to(self.device)
 
             with torch.no_grad():
-                pred = self.GRU_model(feature.float()).detach().cpu().numpy()
+                pred = self.GRU_model(feature).detach().cpu().numpy()
 
             preds.append(pred)
 
