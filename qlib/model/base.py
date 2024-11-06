@@ -1,11 +1,15 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 import abc
+import os
 from typing import Text, Union
-from ..utils.serial import Serializable
+
 from ..data.dataset import Dataset
 from ..data.dataset.weight import Reweighter
+from ..utils.serial import Serializable
 
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 class BaseModel(Serializable, metaclass=abc.ABCMeta):
     """Modeling things"""
