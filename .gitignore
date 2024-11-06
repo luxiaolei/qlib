@@ -57,3 +57,5 @@ examples/**/*.csv
 examples/**/*.json
 examples/**/*.npy
 examples/**/*.bin
+
+test.py

@@ -1,13 +1,8 @@
 #!/bin/bash
 
 # Set the path to MLflow runs directory
-MLFLOW_DIR="/home/trader/repos/qlib/mlruns"
+MLFLOW_DIR="/home/trader/repos/qlib/examples/mlruns"
 
-# Check if the directory exists
-if [ ! -d "$MLFLOW_DIR" ]; then
-    echo "Error: MLflow directory not found at $MLFLOW_DIR"
-    exit 1
-fi
 
 # Start MLflow UI
 echo "Starting MLflow UI server..."
