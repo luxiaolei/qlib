@@ -53,6 +53,8 @@ fastapi = "^0.115.4"
 loky = "^3.4.1"
 torch = "^2.5.1"
 Cython = ">=0.29.0"
+setuptools = "^75.3.0"
+langchain = "^0.3.7"
 
 [tool.poetry.group.dev.dependencies]
 coverage = "*"
@@ -93,11 +95,15 @@ qrun = "qlib.workflow.cli:run"
 requires = [
     "poetry-core>=1.0.0",
     "Cython>=0.29.0",
-    "setuptools>=42",
-    "wheel"
+    "setuptools>=75.3.0",
+    "wheel>=0.40.0",
+    "numpy>=1.23.3"
 ]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.build]
 script = "build.py"
 generate-setup-file = true
+
+[tool.cython-build-options]
+language_level = "3"

@@ -2162,36 +2162,6 @@ testing = ["pytest (==7.1.3)", "scipy (==1.7.3)"]
 toy-text = ["pygame (==2.1.3)", "pygame (==2.1.3)"]
 
 [[package]]
-name = "gymnasium"
-version = "1.0.0"
-description = "A standard API for reinforcement learning and a diverse set of reference environments (formerly Gym)."
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "gymnasium-1.0.0-py3-none-any.whl", hash = "sha256:b6f40e1e24c5bd419361e1a5b86a9117d2499baecc3a660d44dfff4c465393ad"},
-    {file = "gymnasium-1.0.0.tar.gz", hash = "sha256:9d2b66f30c1b34fe3c2ce7fae65ecf365d0e9982d2b3d860235e773328a3b403"},
-]
-
-[package.dependencies]
-cloudpickle = ">=1.2.0"
-farama-notifications = ">=0.0.1"
-numpy = ">=1.21.0"
-typing-extensions = ">=4.3.0"
-
-[package.extras]
-all = ["ale-py (>=0.9)", "box2d-py (==2.3.5)", "cython (<3)", "flax (>=0.5.0)", "imageio (>=2.14.1)", "jax (>=0.4.0)", "jaxlib (>=0.4.0)", "matplotlib (>=3.0)", "moviepy (>=1.0.0)", "mujoco (>=2.1.5)", "mujoco-py (>=2.1,<2.2)", "opencv-python (>=3.0)", "pygame (>=2.1.3)", "swig (==4.*)", "torch (>=1.0.0)"]
-atari = ["ale-py (>=0.9)"]
-box2d = ["box2d-py (==2.3.5)", "pygame (>=2.1.3)", "swig (==4.*)"]
-classic-control = ["pygame (>=2.1.3)", "pygame (>=2.1.3)"]
-jax = ["flax (>=0.5.0)", "jax (>=0.4.0)", "jaxlib (>=0.4.0)"]
-mujoco = ["imageio (>=2.14.1)", "mujoco (>=2.1.5)"]
-mujoco-py = ["cython (<3)", "cython (<3)", "mujoco-py (>=2.1,<2.2)", "mujoco-py (>=2.1,<2.2)"]
-other = ["matplotlib (>=3.0)", "moviepy (>=1.0.0)", "opencv-python (>=3.0)"]
-testing = ["dill (>=0.3.7)", "pytest (==7.1.3)", "scipy (>=1.7.3)"]
-torch = ["torch (>=1.0.0)"]
-toy-text = ["pygame (>=2.1.3)", "pygame (>=2.1.3)"]
-
-[[package]]
 name = "h11"
 version = "0.14.0"
 description = "A pure-Python, bring-your-own-I/O implementation of HTTP/1.1"
@@ -4943,6 +4913,21 @@ xmp = ["defusedxml"]
 
 [[package]]
 name = "platformdirs"
+version = "2.6.2"
+description = "A small Python package for determining appropriate platform-specific dirs, e.g. a \"user data dir\"."
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "platformdirs-2.6.2-py3-none-any.whl", hash = "sha256:83c8f6d04389165de7c9b6f0c682439697887bca0aa2f1c87ef1826be3584490"},
+    {file = "platformdirs-2.6.2.tar.gz", hash = "sha256:e1fea1fe471b9ff8332e229df3cb7de4f53eeea4998d3b6bfff542115e998bd2"},
+]
+
+[package.extras]
+docs = ["furo (>=2022.12.7)", "proselint (>=0.13)", "sphinx (>=5.3)", "sphinx-autodoc-typehints (>=1.19.5)"]
+test = ["appdirs (==1.4.4)", "covdefaults (>=2.2.2)", "pytest (>=7.2)", "pytest-cov (>=4)", "pytest-mock (>=3.10)"]
+
+[[package]]
+name = "platformdirs"
 version = "4.3.6"
 description = "A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`."
 optional = false
@@ -7103,34 +7088,6 @@ files = [
 
 [[package]]
 name = "tianshou"
-version = "0.5.1"
-description = "A Library for Deep Reinforcement Learning"
-optional = false
-python-versions = ">=3.8"
-files = [
-    {file = "tianshou-0.5.1-py3-none-any.whl", hash = "sha256:a165aecde8b10c8696f03db929925f88afc0c38db91d8d4cb523297a2d8c63cd"},
-    {file = "tianshou-0.5.1.tar.gz", hash = "sha256:867366170a2e67a2c706459fa7d5d3ed80911944e0b3fac41d5cbb3695f58b4d"},
-]
-
-[package.dependencies]
-gymnasium = ">=0.26.0"
-h5py = ">=2.10.0"
-numba = ">=0.51.0"
-numpy = ">1.16.0"
-packaging = "*"
-pettingzoo = ">=1.22"
-tensorboard = ">=2.5.0"
-torch = ">=1.4.0"
-tqdm = "*"
-
-[package.extras]
-atari = ["atari-py", "opencv-python"]
-dev = ["doc8", "flake8", "flake8-bugbear", "gym (>=0.22.0)", "isort", "jinja2", "mypy", "networkx", "nni (>=2.3,<3.0)", "pillow", "pydocstyle", "pygame (>=2.1.0)", "pymunk (>=6.2.1)", "pytest", "pytest-cov", "pytorch-lightning", "ray (>=1.0.0)", "scipy", "shimmy", "sphinx (<7)", "sphinx-rtd-theme", "sphinxcontrib-bibtex", "wandb (>=0.12.0)", "yapf"]
-mujoco = ["mujoco-py"]
-pybullet = ["pybullet"]
-
-[[package]]
-name = "tianshou"
 version = "1.1.0"
 description = "A Library for Deep Reinforcement Learning"
 optional = false
@@ -7155,7 +7112,10 @@ sensai-utils = ">=1.2.1,<2.0.0"
 tensorboard = ">=2.5.0,<3.0.0"
 torch = ">=2.0.0,<2.0.1 || >2.0.1,<2.1.0 || >2.1.0,<3.0.0"
 tqdm = "*"
-virtualenv = {version = ">=20.4.3,<20.4.5 || >20.4.5,<20.4.6 || >20.4.6,<21.0.0", markers = "sys_platform != \"win32\""}
+virtualenv = [
+    {version = ">=20.4.3,<20.4.5 || >20.4.5,<20.4.6 || >20.4.6,<20.16.4", markers = "sys_platform == \"win32\""},
+    {version = ">=20.4.3,<20.4.5 || >20.4.5,<20.4.6 || >20.4.6,<21.0.0", markers = "sys_platform != \"win32\""},
+]
 
 [package.extras]
 argparse = ["docstring-parser (>=0.15,<0.16)", "jsonargparse (>=4.24.1,<5.0.0)"]
@@ -7490,6 +7450,26 @@ brotli = ["brotli (>=1.0.9)", "brotlicffi (>=0.8.0)"]
 h2 = ["h2 (>=4,<5)"]
 socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["zstandard (>=0.18.0)"]
+
+[[package]]
+name = "virtualenv"
+version = "20.16.3"
+description = "Virtual Python Environment builder"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "virtualenv-20.16.3-py2.py3-none-any.whl", hash = "sha256:4193b7bc8a6cd23e4eb251ac64f29b4398ab2c233531e66e40b19a6b7b0d30c1"},
+    {file = "virtualenv-20.16.3.tar.gz", hash = "sha256:d86ea0bb50e06252d79e6c241507cb904fcd66090c3271381372d6221a3970f9"},
+]
+
+[package.dependencies]
+distlib = ">=0.3.5,<1"
+filelock = ">=3.4.1,<4"
+platformdirs = ">=2.4,<3"
+
+[package.extras]
+docs = ["proselint (>=0.13)", "sphinx (>=5.1.1)", "sphinx-argparse (>=0.3.1)", "sphinx-rtd-theme (>=1)", "towncrier (>=21.9)"]
+testing = ["coverage (>=6.2)", "coverage-enable-subprocess (>=1)", "flaky (>=3.7)", "packaging (>=21.3)", "pytest (>=7.0.1)", "pytest-env (>=0.6.2)", "pytest-freezegun (>=0.4.2)", "pytest-mock (>=3.6.1)", "pytest-randomly (>=3.10.3)", "pytest-timeout (>=2.1)"]
 
 [[package]]
 name = "virtualenv"
@@ -7914,4 +7894,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11.0,<4.0"
-content-hash = "1097567edf485c37b5633614104b6b66d05a4491dc86f8a8e05d63fefbd8caba"
+content-hash = "3fa9e204a3486c436f4fc347b34ce3348f0fa24d1747e467c4d51e590952b85d"
