@@ -49,3 +49,11 @@ tags
 
 ./pretrain
 .idea/
+
+examples/mlruns
+*events.out*
+examples/**/*.tsv
+examples/**/*.csv
+examples/**/*.json
+examples/**/*.npy
+examples/**/*.bin
