@@ -1,4 +1,4 @@
-## Installation for Mac use python 3.9
+## Installation for Mac use python 3.11
 
 # Install Command Line Tools for Xcode
 xcode-select --install

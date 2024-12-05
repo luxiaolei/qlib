@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "pyqlib"
+name = "qlibraw"
 version = "0.1.0"  # This will be dynamically updated based on qlib/__init__.py
 description = "A Quantitative-research Platform"
 authors = ["Microsoft Corporation <your-email@example.com>"]
@@ -10,7 +10,7 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.11.0,<4.0"
+python = ">=3.11.0,<3.13"
 numpy = ">=1.23.3, <2.0.0"
 pandas = ">=1.5.0"
 scipy = ">=1.7.3"
@@ -44,17 +44,14 @@ filelock = "*"
 jinja2 = "*"
 gym = ">=0.26.0"
 cryptography = "*"
-protobuf = ">=3.20.1, <4.0.0" 
-langserve = "^0.3.0"
 xgboost = "^2.1.2"
 catboost = "^1.2.7"
-langchain-community = "^0.3.5"
 fastapi = "^0.115.4"
 loky = "^3.4.1"
 torch = "^2.5.1"
 Cython = ">=0.29.0"
 setuptools = "^75.3.0"
-langchain = "^0.3.7"
+optuna = "^4.0.0"
 
 [tool.poetry.group.dev.dependencies]
 coverage = "*"
@@ -101,9 +98,14 @@ requires = [
 ]
 build-backend = "poetry.core.masonry.api"
 
-[tool.poetry.build]
-script = "build.py"
-generate-setup-file = true
-
 [tool.cython-build-options]
 language_level = "3"
+
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+priority = "primary"
+
+[[tool.poetry.source]]
+name = "pypi"
+priority = "supplemental"
