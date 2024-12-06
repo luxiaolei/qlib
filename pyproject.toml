@@ -52,6 +52,8 @@ torch = "^2.5.1"
 Cython = ">=0.29.0"
 setuptools = "^75.3.0"
 optuna = "^4.0.0"
+rich = "^13.9.4"
+python-dotenv = "^1.0.1"
 
 [tool.poetry.group.dev.dependencies]
 coverage = "*"
