@@ -6,19 +6,146 @@ and data formatting.
 """
 
 import time
-from typing import Any, Dict, List, cast
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, cast
 
 import pandas as pd
 import requests
 from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 # Load environment variables from .env file
 load_dotenv()
 
 console = Console()
+
+T = TypeVar('T')
+
+class RateLimiter:
+    """Rate limiter for API calls.
+    
+    Attributes
+    ----------
+    calls_per_minute : int
+        Maximum number of calls allowed per minute
+    call_counter : int
+        Current number of calls made
+    minute_start : float
+        Timestamp of the start of current minute window
+    lock : threading.Lock
+        Thread lock for synchronization
+    """
+    
+    def __init__(self, calls_per_minute: int = 740):
+        """Initialize rate limiter.
+        
+        Parameters
+        ----------
+        calls_per_minute : int
+            Maximum calls allowed per minute
+        """
+        self.calls_per_minute = calls_per_minute
+        self.call_counter = 0
+        self.minute_start = time.time()
+        self.lock = Lock()
+        
+    def wait_if_needed(self) -> None:
+        """Check and wait if rate limit is reached."""
+        with self.lock:
+            current_time = time.time()
+            if current_time - self.minute_start >= 60:
+                self.call_counter = 0
+                self.minute_start = current_time
+            
+            if self.call_counter >= self.calls_per_minute:
+                sleep_time = 60 - (current_time - self.minute_start)
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                self.call_counter = 0
+                self.minute_start = time.time()
+            
+            self.call_counter += 1
+
+class ParallelProcessor(Generic[T]):
+    """Generic parallel processor with rate limiting.
+    
+    Attributes
+    ----------
+    rate_limiter : RateLimiter
+        Rate limiter instance
+    max_workers : int
+        Maximum number of parallel workers
+    """
+    
+    def __init__(self, max_workers: int = 10, calls_per_minute: int = 740):
+        """Initialize parallel processor.
+        
+        Parameters
+        ----------
+        max_workers : int
+            Maximum number of parallel workers
+        calls_per_minute : int
+            Maximum API calls per minute
+        """
+        self.rate_limiter = RateLimiter(calls_per_minute)
+        self.max_workers = max_workers
+        
+    def process_parallel(
+        self,
+        items: List[Any],
+        process_func: Callable[[Any], Optional[T]],
+        max_workers: Optional[int] = None,
+        desc: str = "Processing"
+    ) -> List[T]:
+        """Process items in parallel with rate limiting.
+        
+        Parameters
+        ----------
+        items : List[Any]
+            Items to process
+        process_func : Callable
+            Function to process each item
+        max_workers : Optional[int]
+            Override default max workers
+        desc : str
+            Description for progress bar
+            
+        Returns
+        -------
+        List[T]
+            List of processed results
+        """
+        workers = min(max_workers or self.max_workers, len(items))
+        results: List[T] = []
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task(f"[cyan]{desc}...", total=len(items))
+            
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                def process_with_rate_limit(item: Any) -> Optional[T]:
+                    self.rate_limiter.wait_if_needed()
+                    return process_func(item)
+                
+                future_to_item = {
+                    executor.submit(process_with_rate_limit, item): item 
+                    for item in items
+                }
+                
+                for future in as_completed(future_to_item):
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                    progress.advance(task)
+        
+        return results
 
 def get_fmp_data(url: str, api_key: str, delay: float = 0.2) -> Dict[str, Any]:
     """Get data from FMP API with rate limiting and retries.
@@ -62,6 +189,44 @@ def get_fmp_data(url: str, api_key: str, delay: float = 0.2) -> Dict[str, Any]:
                 raise
             time.sleep(2 ** attempt)  # Exponential backoff
     return {}
+
+def get_fmp_data_parallel(
+    urls: List[str],
+    api_key: str,
+    delay: float = 0.2,
+    max_workers: int = 10,
+    desc: str = "Fetching FMP data"
+) -> List[Dict[str, Any]]:
+    """Get data from multiple FMP API endpoints in parallel.
+    
+    Parameters
+    ----------
+    urls : List[str]
+        List of API endpoint URLs
+    api_key : str
+        FMP API key
+    delay : float
+        Delay between API calls
+    max_workers : int
+        Maximum number of parallel workers
+    desc : str
+        Description for progress bar
+        
+    Returns
+    -------
+    List[Dict[str, Any]]
+        List of API responses
+    """
+    processor = ParallelProcessor(max_workers=max_workers)
+    
+    def fetch_single_url(url: str) -> Optional[Dict[str, Any]]:
+        try:
+            return get_fmp_data(url, api_key, delay)
+        except Exception as e:
+            logger.error(f"Error fetching {url}: {e}")
+            return None
+    
+    return processor.process_parallel(urls, fetch_single_url, desc=desc)
 
 def get_us_exchange_symbols(api_key: str) -> List[str]:
     """Get US exchange symbols and indexes from FMP.

@@ -15,12 +15,11 @@ import pandas as pd
 from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from scripts.data_collector.base import BaseCollector, BaseNormalize, BaseRun
 from scripts.data_collector.fmp.utils import (
     format_daily_data,
-    get_fmp_data,
+    get_fmp_data_parallel,
     get_us_exchange_symbols,
     validate_index_data,
 )
@@ -276,36 +275,31 @@ class FMPDailyCollector(BaseCollector):
         all_data = []
         date_chunks = self._split_date_range(start_datetime, end_datetime)
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task(
-                f"[cyan]Downloading {symbol}...", 
-                total=len(date_chunks)
-            )
-            
-            for chunk_start, chunk_end in date_chunks:
-                url = (
-                    f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
-                    f"?from={chunk_start.strftime('%Y-%m-%d')}"
-                    f"&to={chunk_end.strftime('%Y-%m-%d')}"
-                    f"&apikey={self.api_key}"
-                )
-                
-                data = get_fmp_data(url, self.api_key, delay=self.delay)
-                if not data or "historical" not in data:
-                    logger.warning(f"No data found for {symbol} in range {chunk_start} to {chunk_end}")
-                    continue
-                    
+        # Prepare URLs for all chunks
+        urls = [
+            f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
+            f"?from={chunk_start.strftime('%Y-%m-%d')}"
+            f"&to={chunk_end.strftime('%Y-%m-%d')}"
+            f"&apikey={self.api_key}"
+            for chunk_start, chunk_end in date_chunks
+        ]
+        
+        # Fetch data in parallel
+        all_data = []
+        chunk_data_list = get_fmp_data_parallel(
+            urls,
+            self.api_key,
+            delay=self.delay,
+            max_workers=min(10, len(urls)),
+            desc=f"Downloading {symbol}"
+        )
+        
+        for data in chunk_data_list:
+            if data and "historical" in data:
                 df = format_daily_data(data["historical"], symbol)
                 if self._validate_data(df, symbol):
                     all_data.append(df)
-                    
-                progress.advance(task)
-            
+        
         if not all_data:
             return pd.DataFrame()
             
