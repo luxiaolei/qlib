@@ -1,26 +1,26 @@
 #  Copyright (c) Microsoft Corporation.
 #  Licensed under the MIT License.
 
-import re
-import copy
-import importlib
-import time
 import bisect
+import copy
+import functools
+import importlib
 import pickle
 import random
-import requests
-import functools
+import re
+import time
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
-from typing import Iterable, Tuple, List
+from typing import Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
-from loguru import logger
-from yahooquery import Ticker
-from tqdm import tqdm
-from functools import partial
-from concurrent.futures import ProcessPoolExecutor
+import requests
 from bs4 import BeautifulSoup
+from loguru import logger
+from tqdm import tqdm
+from yahooquery import Ticker
 
 HS_SYMBOLS_URL = "http://app.finance.ifeng.com/hq/list.php?type=stock_a&class={s_type}"
 
@@ -671,6 +671,8 @@ def calc_adjusted_price(
     frequence: str,
     consistent_1d: bool = True,
     calc_paused: bool = True,
+    am_range: Tuple[str, str] = ("09:30:00", "11:29:00"),
+    pm_range: Tuple[str, str] = ("13:00:00", "14:59:00"),
 ) -> pd.DataFrame:
     """calc adjusted price
     This method does 4 things.
@@ -734,8 +736,8 @@ def calc_adjusted_price(
                 generate_minutes_calendar_from_daily(
                     calendars=pd.to_datetime(data_1d.reset_index()[_date_field_name].drop_duplicates()),
                     freq=frequence,
-                    am_range=("09:30:00", "11:29:00"),
-                    pm_range=("13:00:00", "14:59:00"),
+                    am_range=am_range,
+                    pm_range=pm_range,
                 )
             )
             df[_symbol_field_name] = df.loc[df[_symbol_field_name].first_valid_index()][_symbol_field_name]

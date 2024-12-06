@@ -4,17 +4,18 @@
 import abc
 import shutil
 import traceback
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 from typing import Iterable, List, Union
-from functools import partial
-from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 
 import fire
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from loguru import logger
-from qlib.utils import fname_to_code, code_to_fname
+from tqdm import tqdm
+
+from qlib.utils import code_to_fname, fname_to_code
 
 
 class DumpDataBase:
@@ -43,7 +44,7 @@ class DumpDataBase:
         file_suffix: str = ".csv",
         symbol_field_name: str = "symbol",
         exclude_fields: str = "",
-        include_fields: str = "",
+        include_fields: str = "open,close,high,low,volume,factor",
         limit_nums: int = None,
     ):
         """

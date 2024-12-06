@@ -34,6 +34,7 @@ class TestNN(TestAutoData):
                 {
                     "class": "DropnaLabel",
                 },
+                {'class': "Fillna", "kwargs": {"fields_group": "feature"}},
                 {"class": "CSZScoreNorm", "kwargs": {"fields_group": "label"}},
             ],
         }
