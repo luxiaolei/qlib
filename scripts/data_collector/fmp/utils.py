@@ -8,7 +8,7 @@ and data formatting.
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, cast
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, cast
 
 import pandas as pd
 import requests
@@ -373,3 +373,53 @@ def validate_index_data(df: pd.DataFrame, symbol: str) -> bool:
         return False
         
     return True
+
+def split_5min_date_range(
+    start_datetime: pd.Timestamp, 
+    end_datetime: pd.Timestamp
+) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+    """Split 5-minute data date range into 4-day chunks.
+    
+    Parameters
+    ----------
+    start_datetime : pd.Timestamp
+        Start date
+    end_datetime : pd.Timestamp
+        End date
+        
+    Returns
+    -------
+    List[Tuple[pd.Timestamp, pd.Timestamp]]
+        List of (start, end) date pairs for each chunk
+        
+    Notes
+    -----
+    - FMP API limits 5-minute data to 4 days per request
+    - Splits date range into 4-day chunks
+    - Handles partial periods at start and end
+    - Ensures no gaps in date coverage
+    """
+    MAX_DAYS_PER_CHUNK = 4
+    date_ranges = []
+    current_date = start_datetime
+    
+    while current_date < end_datetime:
+        # Calculate days difference from current to end
+        days_remaining = (end_datetime - current_date).days
+        
+        if days_remaining <= MAX_DAYS_PER_CHUNK:
+            # If remaining period is less than max chunk size, use end_datetime
+            chunk_end = end_datetime
+        else:
+            # Create a 4-day chunk
+            chunk_end = current_date + pd.Timedelta(days=MAX_DAYS_PER_CHUNK)
+        
+        date_ranges.append((current_date, chunk_end))
+        current_date = chunk_end + pd.Timedelta(days=1)
+        
+        # Safety check to prevent infinite loops
+        if len(date_ranges) > 1000:  # Arbitrary large number
+            logger.warning("Too many date chunks created, breaking loop")
+            break
+    
+    return date_ranges
