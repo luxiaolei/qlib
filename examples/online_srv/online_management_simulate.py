@@ -6,19 +6,22 @@ This example is about how can simulate the OnlineManager based on rolling tasks.
 """
 
 from pprint import pprint
-import fire
+
+import pandas as pd
+
 import qlib
-from qlib.model.trainer import DelayTrainerR, DelayTrainerRM, TrainerR, TrainerRM
+from qlib.contrib.evaluate import backtest_daily, risk_analysis
+from qlib.contrib.strategy import TopkDropoutStrategy
+from qlib.model.trainer import TrainerR, TrainerRM
+from qlib.tests.config import (
+    CSI100_RECORD_LGB_TASK_CONFIG_ONLINE,
+    CSI100_RECORD_XGBOOST_TASK_CONFIG_ONLINE,
+)
 from qlib.workflow import R
 from qlib.workflow.online.manager import OnlineManager
 from qlib.workflow.online.strategy import RollingStrategy
 from qlib.workflow.task.gen import RollingGen
 from qlib.workflow.task.manage import TaskManager
-from qlib.tests.config import CSI100_RECORD_LGB_TASK_CONFIG_ONLINE, CSI100_RECORD_XGBOOST_TASK_CONFIG_ONLINE
-import pandas as pd
-from qlib.contrib.evaluate import backtest_daily
-from qlib.contrib.evaluate import risk_analysis
-from qlib.contrib.strategy import TopkDropoutStrategy
 
 
 class OnlineSimulationExample:
@@ -134,4 +137,5 @@ class OnlineSimulationExample:
 if __name__ == "__main__":
     ## to run all workflow automatically with your own parameters, use the command below
     # python online_management_simulate.py main --experiment_name="your_exp_name" --rolling_step=60
-    fire.Fire(OnlineSimulationExample)
+    #fire.Fire(OnlineSimulationExample)
+    OnlineSimulationExample().main()
