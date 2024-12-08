@@ -220,15 +220,15 @@ class LSTM(Model):
             try:
                 if data is None or len(data) == 0:
                     continue
-                feature = data[:, :, 0:-1].to(self.device)
-                label = data[:, -1, -1].to(self.device)
+                feature = data[:, :, 0:-1].float().to(self.device)
+                label = data[:, -1, -1].float().to(self.device)
                 
                 # Clear gradients
                 self.train_optimizer.zero_grad(set_to_none=True)
                 
                 if self.device.type == 'cuda':
                     with torch.cuda.amp.autocast():
-                        pred = self.LSTM_model(feature.float())
+                        pred = self.LSTM_model(feature)
                         loss = self.loss_fn(pred, label, weight.to(self.device))
                     
                     # Use gradient scaling
@@ -238,7 +238,7 @@ class LSTM(Model):
                     self.scaler.step(self.train_optimizer)
                     self.scaler.update()
                 else:
-                    pred = self.LSTM_model(feature.float())
+                    pred = self.LSTM_model(feature)
                     loss = self.loss_fn(pred, label, weight.to(self.device))
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.LSTM_model.parameters(), 3.0)
@@ -264,16 +264,18 @@ class LSTM(Model):
         losses = []
 
         for data, weight in data_loader:
-            feature = data[:, :, 0:-1].to(self.device)
-            # feature[torch.isnan(feature)] = 0
-            label = data[:, -1, -1].to(self.device)
+            # Convert data and weights to float32 explicitly
+            feature = data[:, :, 0:-1].float().to(self.device)
+            label = data[:, -1, -1].float().to(self.device)
+            weight = weight.float().to(self.device)  # Convert weight to float32
 
-            pred = self.LSTM_model(feature.float())
-            loss = self.loss_fn(pred, label, weight.to(self.device))
-            losses.append(loss.item())
+            with torch.no_grad():
+                pred = self.LSTM_model(feature)
+                loss = self.loss_fn(pred, label, weight)
+                losses.append(loss.item())
 
-            score = self.metric_fn(pred, label)
-            scores.append(score.item())
+                score = self.metric_fn(pred, label)
+                scores.append(score.item())
 
         return np.mean(losses), np.mean(scores)
 
@@ -301,11 +303,14 @@ class LSTM(Model):
         dl_valid.config(fillna_type="ffill+bfill")  # process nan brought by dataloader
 
         if reweighter is None:
-            wl_train = np.ones(len(dl_train))
-            wl_valid = np.ones(len(dl_valid))
+            # Convert weights to float32
+            wl_train = np.ones(len(dl_train), dtype=np.float32)
+            wl_valid = np.ones(len(dl_valid), dtype=np.float32)
         elif isinstance(reweighter, Reweighter):
-            wl_train = reweighter.reweight(dl_train)
-            wl_valid = reweighter.reweight(dl_valid)
+            # Convert reweighter outputs to float32
+            wl_train = reweighter.reweight(dl_train).astype(np.float32)
+            wl_valid = reweighter.reweight(dl_valid).astype(np.float32)
+
         else:
             raise ValueError("Unsupported reweighter type.")
 
