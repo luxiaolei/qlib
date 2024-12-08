@@ -8,7 +8,7 @@ import importlib
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Iterable, Type
+from typing import Iterable, Optional, Type, Union
 
 import pandas as pd
 from joblib import Parallel, delayed
@@ -32,38 +32,38 @@ class BaseCollector(abc.ABC):
 
     def __init__(
         self,
-        save_dir: [str, Path],
-        start=None,
-        end=None,
-        interval="1d",
-        max_workers=1,
-        max_collector_count=2,
-        delay=0,
-        check_data_length: int = None,
-        limit_nums: int = None,
+        save_dir: Union[str, Path],
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        interval: str = "1d",
+        max_workers: int = 1,
+        max_collector_count: int = 2,
+        delay: float = 0,
+        check_data_length: Optional[int] = None,
+        limit_nums: Optional[int] = None,
     ):
-        """
-
+        """Initialize collector.
+        
         Parameters
         ----------
-        save_dir: str
-            instrument save dir
-        max_workers: int
-            workers, default 1; Concurrent number, default is 1; when collecting data, it is recommended that max_workers be set to 1
-        max_collector_count: int
-            default 2
-        delay: float
-            time.sleep(delay), default 0
-        interval: str
-            freq, value from [1min, 1d], default 1d
-        start: str
-            start datetime, default None
-        end: str
-            end datetime, default None
-        check_data_length: int
-            check data length, if not None and greater than 0, each symbol will be considered complete if its data length is greater than or equal to this value, otherwise it will be fetched again, the maximum number of fetches being (max_collector_count). By default None.
-        limit_nums: int
-            using for debug, by default None
+        save_dir : Union[str, Path]
+            Instrument save directory
+        start : Optional[str]
+            Start datetime
+        end : Optional[str]
+            End datetime
+        interval : str
+            Data interval ('1d' or '5min')
+        max_workers : int
+            Maximum number of parallel workers
+        max_collector_count : int
+            Maximum collection attempts per symbol
+        delay : float
+            Delay between API calls
+        check_data_length : Optional[int]
+            Minimum required data length
+        limit_nums : Optional[int]
+            Limit number of symbols to collect
         """
         self.save_dir = Path(save_dir).expanduser().resolve()
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -73,7 +73,7 @@ class BaseCollector(abc.ABC):
         self.max_collector_count = max_collector_count
         self.mini_symbol_map = {}
         self.interval = interval
-        self.check_data_length = max(int(check_data_length) if check_data_length is not None else 0, 0)
+        self.check_data_length = max(int(check_data_length or 0), 0)
 
         self.start_datetime = self.normalize_start_datetime(start)
         self.end_datetime = self.normalize_end_datetime(end)
@@ -82,18 +82,26 @@ class BaseCollector(abc.ABC):
 
         if limit_nums is not None:
             try:
-                self.instrument_list = self.instrument_list[: int(limit_nums)]
+                self.instrument_list = self.instrument_list[:int(limit_nums)]
             except Exception as e:
                 logger.warning(f"Cannot use limit_nums={limit_nums}, the parameter will be ignored")
 
-    def normalize_start_datetime(self, start_datetime: [str, pd.Timestamp] = None):
+    def normalize_start_datetime(
+        self, 
+        start_datetime: Optional[Union[str, pd.Timestamp]] = None
+    ) -> pd.Timestamp:
+        """Normalize start datetime."""
         return (
             pd.Timestamp(str(start_datetime))
             if start_datetime
             else getattr(self, f"DEFAULT_START_DATETIME_{self.interval.upper()}")
         )
 
-    def normalize_end_datetime(self, end_datetime: [str, pd.Timestamp] = None):
+    def normalize_end_datetime(
+        self, 
+        end_datetime: Optional[Union[str, pd.Timestamp]] = None
+    ) -> pd.Timestamp:
+        """Normalize end datetime."""
         return (
             pd.Timestamp(str(end_datetime))
             if end_datetime
@@ -247,31 +255,15 @@ class BaseNormalize(abc.ABC):
 class Normalize:
     def __init__(
         self,
-        source_dir: [str, Path],
-        target_dir: [str, Path],
+        source_dir: Union[str, Path],
+        target_dir: Union[str, Path],
         normalize_class: Type[BaseNormalize],
         max_workers: int = 16,
         date_field_name: str = "date",
         symbol_field_name: str = "symbol",
         **kwargs,
     ):
-        """
-
-        Parameters
-        ----------
-        source_dir: str or Path
-            The directory where the raw data collected from the Internet is saved
-        target_dir: str or Path
-            Directory for normalize data
-        normalize_class: Type[YahooNormalize]
-            normalize class
-        max_workers: int
-            Concurrent number, default is 16
-        date_field_name: str
-            date field name, default is date
-        symbol_field_name: str
-            symbol field name, default is symbol
-        """
+        """Initialize normalizer."""
         if not (source_dir and target_dir):
             raise ValueError("source_dir and target_dir cannot be None")
         self._source_dir = Path(source_dir).expanduser()
@@ -283,26 +275,32 @@ class Normalize:
         self._max_workers = max_workers
 
         self._normalize_obj = normalize_class(
-            date_field_name=date_field_name, symbol_field_name=symbol_field_name, **kwargs
+            date_field_name=date_field_name,
+            symbol_field_name=symbol_field_name,
+            **kwargs
         )
 
     def _executor(self, file_path: Path):
+        """Execute normalization for a file."""
         file_path = Path(file_path)
 
-        # some symbol_field values such as TRUE, NA are decoded as True(bool), NaN(np.float) by pandas default csv parsing.
-        # manually defines dtype and na_values of the symbol_field.
-        default_na = pd._libs.parsers.STR_NA_VALUES  # pylint: disable=I1101
-        symbol_na = default_na.copy()
+        # Get pandas NA values safely
+        import pandas._libs.parsers as parsers
+        default_na = list(parsers.STR_NA_VALUES)
+        symbol_na = list(default_na)
         symbol_na.remove("NA")
+        
         columns = pd.read_csv(file_path, nrows=0).columns
         df = pd.read_csv(
             file_path,
             dtype={self._symbol_field_name: str},
             keep_default_na=False,
-            na_values={col: symbol_na if col == self._symbol_field_name else default_na for col in columns},
+            na_values={
+                col: symbol_na if col == self._symbol_field_name else default_na 
+                for col in columns
+            },
         )
 
-        # NOTE: It has been reported that there may be some problems here, and the specific issues will be dealt with when they are identified.
         df = self._normalize_obj.normalize(df)
         if df is not None and not df.empty:
             if self._end_date is not None:
@@ -344,8 +342,8 @@ class BaseRun(abc.ABC):
             normalize_dir = Path(self.default_base_dir).joinpath("normalize")
         self.normalize_dir = Path(normalize_dir).expanduser().resolve()
         self.normalize_dir.mkdir(parents=True, exist_ok=True)
-
-        self._cur_module = importlib.import_module("collector")
+        if not hasattr(self, "_cur_module"):
+            self._cur_module = importlib.import_module("collector")
         self.max_workers = max_workers
         self.interval = interval
 
@@ -361,45 +359,22 @@ class BaseRun(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def default_base_dir(self) -> [Path, str]:
+    def default_base_dir(self) -> Union[Path, str]:
+        """Get default base directory."""
         raise NotImplementedError("rewrite default_base_dir")
 
     def download_data(
         self,
-        max_collector_count=2,
-        delay=0,
-        start=None,
-        end=None,
-        check_data_length: int = None,
-        limit_nums=None,
+        max_collector_count: int = 2,
+        delay: float = 0,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        check_data_length: Optional[int] = None,
+        limit_nums: Optional[int] = None,
         **kwargs,
     ):
-        """download data from Internet
-
-        Parameters
-        ----------
-        max_collector_count: int
-            default 2
-        delay: float
-            time.sleep(delay), default 0
-        start: str
-            start datetime, default "2000-01-01"
-        end: str
-            end datetime, default ``pd.Timestamp(datetime.datetime.now() + pd.Timedelta(days=1))``
-        check_data_length: int
-            check data length, if not None and greater than 0, each symbol will be considered complete if its data length is greater than or equal to this value, otherwise it will be fetched again, the maximum number of fetches being (max_collector_count). By default None.
-        limit_nums: int
-            using for debug, by default None
-
-        Examples
-        ---------
-            # get daily data
-            $ python collector.py download_data --source_dir ~/.qlib/instrument_data/source --region CN --start 2020-11-01 --end 2020-11-10 --delay 0.1 --interval 1d
-            # get 1m data
-            $ python collector.py download_data --source_dir ~/.qlib/instrument_data/source --region CN --start 2020-11-01 --end 2020-11-10 --delay 0.1 --interval 1m
-        """
-
-        _class = getattr(self._cur_module, self.collector_class_name)  # type: Type[BaseCollector]
+        """Download data."""
+        _class = getattr(self._cur_module, self.collector_class_name)
         _class(
             self.source_dir,
             max_workers=self.max_workers,
