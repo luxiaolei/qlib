@@ -1,8 +1,8 @@
 qlib_init:
-    provider_uri: "~/.qlib/qlib_data/cn_data"
-    region: cn
-market: &market csi300
-benchmark: &benchmark SH000300
+    provider_uri: "~/.qlib/qlib_data/us_data"
+    region: us
+market: &market SP500
+benchmark: &benchmark ^GSPC
 data_handler_config: &data_handler_config
     start_time: 2008-01-01
     end_time: 2020-08-01
@@ -14,10 +14,10 @@ data_handler_config: &data_handler_config
           kwargs:
               fields_group: feature
               clip_outlier: true
+    learn_processors:
         - class: Fillna
           kwargs:
               fields_group: feature
-    learn_processors:
         - class: DropnaLabel
         - class: CSRankNorm
           kwargs:
