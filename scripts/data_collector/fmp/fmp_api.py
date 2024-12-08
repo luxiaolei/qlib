@@ -8,7 +8,7 @@ import asyncio
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union, cast
 
@@ -68,7 +68,10 @@ class HistoricalConstituentData(TypedDict):
     reason: str
 
 class RedisRateLimiter:
-    """Redis-based rate limiter for API calls.
+    """Redis-based rate limiter for API calls using a simple key expiration approach.
+    
+    This implementation uses a single key with expiration time to enforce rate limits.
+    For FMP's 740 calls/minute limit, we set key expiration to 60/740 seconds.
     
     Attributes
     ----------
@@ -78,6 +81,8 @@ class RedisRateLimiter:
         Maximum number of calls allowed per minute
     key_prefix : str
         Prefix for Redis keys
+    window_size : float
+        Time window in seconds for each request (60/max_calls)
     """
     
     def __init__(
@@ -112,7 +117,8 @@ class RedisRateLimiter:
         self.redis_client = redis.from_url(redis_url)
         self.max_calls = max_calls
         self.key_prefix = key_prefix
-        self._rate_limit_hits = 0  # Track total rate limits hit
+        self.window_size = 60 / max_calls  # Time window per request in seconds
+        self._rate_limit_hits = 0
         
     async def acquire(self) -> bool:
         """Acquire a rate limit token.
@@ -121,44 +127,26 @@ class RedisRateLimiter:
         -------
         bool
             True if token acquired, False if rate limit exceeded
-            
-        Notes
-        -----
-        Uses Redis sorted set to track API calls with timestamps
-        Removes expired entries and checks against limit
         """
-        now = datetime.utcnow()
-        window_start = now - timedelta(minutes=1)  # 1-minute window for FMP's 740 calls/min limit
-        key = f"{self.key_prefix}calls"
+        key = f"{self.key_prefix}last_call"
         
-        pipe = self.redis_client.pipeline()
+        # Ensure minimum window size of 1ms to prevent potential issues
+        expiry_ms = max(int(self.window_size * 1000), 1)
         
-        # Remove expired entries (older than 1 minute)
-        pipe.zremrangebyscore(
-            key,
-            min=0,
-            max=window_start.timestamp()
-        )
-        
-        # Count current entries
-        pipe.zcard(key)
-        
-        # Add new entry
-        pipe.zadd(key, {str(now.timestamp()): now.timestamp()})
-        
-        # Set expiry on the key (1 minute to match FMP's window)
-        pipe.expire(key, 60)  # 60 seconds = 1 minute
-        
-        # Execute pipeline
-        _, current_count, *_ = pipe.execute()
-        
-        if current_count >= self.max_calls:
+        try:
+            # Try to set key with NX (only if not exists) using pexpire for millisecond precision
+            if self.redis_client.set(key, '1', px=expiry_ms, nx=True):
+                return True
+                
             self._rate_limit_hits += 1
             if self._rate_limit_hits == 1:  # Only log on first hit
-                logger.warning(f"Rate limit exceeded: {current_count} requests in the last minute (limit: {self.max_calls})")
+                logger.warning(f"Rate limit exceeded: waiting {self.window_size:.3f} seconds between requests")
             return False
             
-        return True
+        except redis.RedisError as e:
+            logger.error(f"Redis error in rate limiter: {e}")
+            # On Redis errors, allow the request to prevent complete service disruption
+            return True
         
     async def wait_if_needed(self) -> None:
         """Wait until a rate limit token is available."""
@@ -167,10 +155,10 @@ class RedisRateLimiter:
                 logger.warning("Rate limit hit, waiting for token...")
             t0 = time.time()
             while not await self.acquire():
-                await asyncio.sleep(1)  # Wait 1 second before retrying
+                await asyncio.sleep(self.window_size)
             t1 = time.time()
             logger.info(f"Rate limit cleared after {self._rate_limit_hits} hits, took {t1 - t0:.2f} seconds")
-            self._rate_limit_hits = 0  # Reset counter
+            self._rate_limit_hits = 0
 
     @property
     def total_rate_limit_hits(self) -> int:

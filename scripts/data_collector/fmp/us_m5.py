@@ -1,43 +1,35 @@
 """US 5-Minute Stock Data Collector for Financial Modeling Prep (FMP).
 
 This module implements the data collection and normalization for US 5-minute stock data
-from FMP API. It includes classes for collecting, normalizing, and running the data
-collection process.
+from FMP API.
 """
 
-import importlib
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
 
+import qlib
 from qlib.data import D
-from scripts.data_collector.base import BaseCollector, BaseNormalize, BaseRun
-from scripts.data_collector.fmp.utils import (
-    get_fmp_data_parallel,
-    split_5min_date_range,
+from scripts.data_collector.fmp.collector import (
+    BaseFMPCollector,
+    BaseFMPNormalize,
+    BaseFMPNormalizeExtend,
+    BaseFMPRunner,
 )
 from scripts.data_collector.utils import (
     calc_adjusted_price,
     generate_minutes_calendar_from_daily,
 )
-from scripts.dump_bin import DumpDataAll, DumpDataUpdate
 
-# Load environment variables
-load_dotenv()
 console = Console()
 
-class FMP5minCollector(BaseCollector):
-    """Collector for US 5-minute stock data from FMP API.
-    
-    This class handles the collection of 5-minute stock data from Financial Modeling Prep API.
-    It implements data fetching, validation, and storage mechanisms.
-    """
+class FMP5minCollector(BaseFMPCollector):
+    """Collector for US 5-minute stock data from FMP API."""
     
     DEFAULT_START_DATETIME_5MIN = pd.Timestamp(datetime.now() - timedelta(days=30))
     DEFAULT_END_DATETIME_5MIN = pd.Timestamp(datetime.now())
@@ -47,222 +39,116 @@ class FMP5minCollector(BaseCollector):
         save_dir: Union[str, Path] = "~/.qlib/qlib_data/us_fmp_5min",
         start: Optional[str] = None,
         end: Optional[str] = None,
-        interval: str = "5min",
-        max_workers: int = 4,
-        max_collector_count: int = 2,
-        delay: int = 1,
+        delay: float = 0.1,
         check_data_length: Optional[int] = None,
         limit_nums: Optional[int] = None,
-        qlib_data_1d_dir: str = "~/.qlib/qlib_data/us_fmp_d1",
         instruments: Optional[List[str]] = None,
+        skip_existing: bool = False,
+        qlib_data_1d_dir: str = "~/.qlib/qlib_data/us_fmp_d1",
     ):
-        """Initialize FMP 5-minute data collector.
-        
-        Parameters
-        ----------
-        save_dir : Union[str, Path]
-            Directory to save collected data
-        start : Optional[str]
-            Start date for data collection (YYYY-MM-DD)
-        end : Optional[str]
-            End date for data collection (YYYY-MM-DD)
-        interval : str
-            Data interval, default "5min"
-        max_workers : int
-            Maximum number of parallel workers
-        max_collector_count : int
-            Maximum collection attempts
-        delay : int
-            Delay between API calls
-        check_data_length : Optional[int]
-            Minimum required data length
-        limit_nums : Optional[int]
-            Limit number of symbols to collect
-        qlib_data_1d_dir : str
-            Directory containing 1d data for factor calculation
-        instruments : Optional[List[str]]
-            List of symbols to collect. If None, will read from all.txt
-        """
-        api_key = os.getenv("FMP_API_KEY")
-        if not api_key:
-            raise ValueError("FMP_API_KEY not found in environment variables")
-        self.api_key = api_key
-        
+        """Initialize FMP 5-minute collector."""
         # Check if 1d data exists
         qlib_data_1d_path = Path(qlib_data_1d_dir).expanduser()
         if not qlib_data_1d_path.exists():
             raise ValueError(f"1d data directory not found: {qlib_data_1d_path}")
         self.qlib_data_1d_path = qlib_data_1d_path
         
-        self._instruments = instruments
-        
         super().__init__(
             save_dir=save_dir,
             start=start,
             end=end,
-            interval=interval,
-            max_workers=max_workers,
-            max_collector_count=max_collector_count,
+            interval="5min",
             delay=delay,
-            check_data_length=check_data_length or 0,
-            limit_nums=limit_nums or 0,
+            check_data_length=check_data_length,
+            limit_nums=limit_nums,
+            instruments=instruments,
+            skip_existing=skip_existing,
         )
 
-    def get_instrument_list(self) -> List[str]:
-        """Get list of instruments from all.txt file or provided list.
-        
-        Returns
-        -------
-        List[str]
-            List of stock symbols
-        """
-        # First check if instruments were provided in initialization
-        if hasattr(self, '_instruments') and self._instruments is not None:
-            console.print(f"[bold green]Using provided instruments: {self._instruments}[/]")
-            # For provided instruments, we'll use the full date range
-            self._instrument_dates = {
-                symbol: (self.start_datetime, self.end_datetime)
-                for symbol in self._instruments
-            }
-            return [str(symbol).strip().upper() for symbol in self._instruments]
-        
-        # If no instruments provided, read from all.txt
-        instruments_file = self.qlib_data_1d_path / "instruments" / "all.txt"
-        if not instruments_file.exists():
-            raise ValueError(f"[bold red]Instruments file not found: {instruments_file}[/]")
-            
-        df = pd.read_csv(
-            instruments_file,
-            sep="\t",
-            names=["symbol", "start_date", "end_date"],
-        )
-        
-        df["start_date"] = pd.to_datetime(df["start_date"])
-        df["end_date"] = pd.to_datetime(df["end_date"])
-        
-        # Filter instruments based on date range
-        mask = (
-            (df["start_date"] <= self.end_datetime) &
-            (df["end_date"] >= self.start_datetime)
-        )
-        filtered_df = df.loc[mask]
-        
-        # Store instrument date ranges in a dictionary
-        self._instrument_dates = {
-            row["symbol"]: (
-                max(row["start_date"], self.start_datetime),
-                min(row["end_date"], self.end_datetime)
-            )
-            for _, row in filtered_df.iterrows()
-        }
-        
-        return filtered_df["symbol"].unique().tolist()
-
-    def normalize_symbol(self, symbol: str) -> str:
-        """Normalize stock symbol format.
-        
-        Parameters
-        ----------
-        symbol : str
-            Raw stock symbol
-            
-        Returns
-        -------
-        str
-            Normalized symbol in uppercase
-        """
-        return symbol.strip().upper()
-
-    def get_data(
-        self,
-        symbol: str,
-        interval: str,
-        start_datetime: pd.Timestamp,
-        end_datetime: pd.Timestamp
-    ) -> pd.DataFrame:
-        """Get 5-minute stock data from FMP API.
-        
-        Parameters
-        ----------
-        symbol : str
-            Stock symbol
-        interval : str
-            Data interval (should be "5min")
-        start_datetime : pd.Timestamp
-            Start date
-        end_datetime : pd.Timestamp
-            End date
-            
-        Returns
-        -------
-        pd.DataFrame
-            Collected and formatted stock data
-        """
-        # Get instrument-specific date range from stored dictionary
-        if hasattr(self, '_instrument_dates') and symbol in self._instrument_dates:
-            symbol_start, symbol_end = self._instrument_dates[symbol]
-            # Use the intersection of requested date range and instrument's available range
-            start_datetime = max(start_datetime, symbol_start)
-            end_datetime = min(end_datetime, symbol_end)
-            
-            if start_datetime >= end_datetime:
-                console.print(f"[bold yellow]No valid date range for {symbol}[/]")
-                return pd.DataFrame()
-        
-        # Split date range into 4-day chunks
-        date_chunks = split_5min_date_range(start_datetime, end_datetime)
-        
-        # Prepare URLs for all chunks
-        urls = [
-            f"https://financialmodelingprep.com/api/v3/historical-chart/5min/{symbol}"
-            f"?from={chunk_start.strftime('%Y-%m-%d')}"
-            f"&to={chunk_end.strftime('%Y-%m-%d')}"
-            f"&apikey={self.api_key}"
-            for chunk_start, chunk_end in date_chunks
-        ]
-        
-        # Fetch data in parallel
-        chunk_data_list = get_fmp_data_parallel(
-            urls,
-            self.api_key,
-            delay=self.delay,
-            max_workers=min(10, len(urls)),
-            desc=f"Downloading {symbol}"
-        )
-        
-        # Combine all data into a single list
-        all_data = []
-        for data in chunk_data_list:
-            if data:  # For 5min data, the response is directly a list
-                all_data.extend(data)
-        
-        if not all_data:
-            return pd.DataFrame()
-        
-        # Create DataFrame directly from the combined list
-        df = pd.DataFrame(all_data)
-        df = df.rename(columns={
-            "date": "date",
-            "open": "open",
-            "high": "high",
-            "low": "low",
-            "close": "close",
-            "volume": "volume",
-        })
-        df["date"] = pd.to_datetime(df["date"])
-        df["symbol"] = symbol
-        
-        # Sort and remove duplicates
-        df = df.drop_duplicates(subset=["date"]).sort_values("date")
-        return df[["symbol", "date", "open", "high", "low", "close", "volume"]]
+class FMP5minNormalize(BaseFMPNormalize):
+    """Normalize FMP 5-minute data to Qlib format.
     
-class FMPNormalize5min(BaseNormalize):
-    """Normalize FMP 5-minute data to Qlib format."""
+    This class handles the normalization of 5-minute stock data from FMP to Qlib format.
+    The normalization process follows these exact steps:
+
+    1. Basic Data Preparation:
+       - Convert index to datetime: df.index = pd.to_datetime(df.index)
+       - Remove timezone info: df.index = df.index.tz_localize(None)
+       - Remove duplicates: df = df[~df.index.duplicated(keep="first")]
+       - Sort by timestamp: df.sort_index(inplace=True)
+
+    2. Daily Data Integration:
+       - Get daily data for adjustment using D.features():
+         * Fields: ["$volume", "$factor", "$close"]
+         * Time range: [start_time - 1day, end_time]
+       - For live trading (when end_time is today during market hours):
+         * Query range: [start_time - 1day, last_trading_day]
+         * Extend with today's entry using last known values
+         * Set paused=0 for live data
+       - If no daily data:
+         * Create default DataFrame with factor=1.0
+         * Mark as not paused (paused=0)
+
+    3. Price Adjustment Process (via calc_adjusted_price):
+       - For each price field (OHLC):
+         adjusted_price = raw_price * factor
+       - For volume:
+         adjusted_volume = raw_volume / factor
+       - Factors come from daily data's $factor field
+       - Live trading uses previous day's factor
+
+    4. Calendar Alignment:
+       - Get market hours calendar:
+         * AM: 9:30 AM - 11:59:59 AM ET
+         * PM: 12:00 PM - 3:59:59 PM ET
+       - Create 5-min intervals: pd.date_range(freq="5min")
+       - Intersect with trading calendar
+       - Reindex data to aligned timestamps
+
+    5. Data Quality Handling:
+       - Invalid volume check:
+         df.loc[(df["volume"] <= 0) | np.isnan(df["volume"]), fields] = np.nan
+       - Paused detection from daily data:
+         daily_df.loc[(daily_df["$volume"].isna()) | (daily_df["$volume"] <= 0), "paused"] = 1
+
+    6. Special Cases:
+       a) Live Trading:
+          - Detect using: end_time.normalize() == today && is_trading_hours
+          - Use last_trading_day's data for adjustments
+          - Extend daily data with:
+            * last_factor from daily_df["$factor"].iloc[-1]
+            * last_volume from daily_df["$volume"].iloc[-1]
+            * last_close from daily_df["$close"].iloc[-1]
+            * paused = 0 (assuming active trading)
+       
+       b) Missing Daily Data:
+          - Create default data with:
+            * $factor = 1.0
+            * $volume = np.nan
+            * $close = np.nan
+            * paused = 0
+          - Log warning about using raw data
+
+    Key Features:
+    - Maintains price continuity across corporate actions
+    - Handles both historical and live data consistently
+    - Caches daily data for efficiency
+    - Properly aligns with market trading hours
+    - Robust handling of missing or invalid data
+
+    Dependencies:
+    - Requires daily data with factors for proper adjustment
+    - Uses qlib.data.D for data access
+    - Relies on calc_adjusted_price for core adjustment logic
+    """
     
     COLUMNS = ["open", "close", "high", "low", "volume"]
     
-    AM_RANGE = ("09:30:00", "11:59:00")
-    PM_RANGE = ("12:00:00", "15:59:00")
+    # US Market Hours (Eastern Time)
+    AM_RANGE: Tuple[str, str] = ("09:30:00", "11:59:59")
+    PM_RANGE: Tuple[str, str] = ("12:00:00", "15:59:59")
+    
+    CALC_PAUSED_NUM = False  # US market doesn't need paused number calculation
     
     def __init__(
         self,
@@ -271,274 +157,433 @@ class FMPNormalize5min(BaseNormalize):
         symbol_field_name: str = "symbol",
         **kwargs
     ):
-        """Initialize normalizer.
-        
-        Parameters
-        ----------
-        qlib_data_1d_dir : Union[str, Path]
-            Directory containing 1d Qlib data
-        date_field_name : str
-            Date field name
-        symbol_field_name : str
-            Symbol field name
-        """
-        qlib_data_1d_path = Path(qlib_data_1d_dir).expanduser()
-        if not qlib_data_1d_path.exists():
-            raise ValueError(f"1d data directory not found: {qlib_data_1d_path}")
-            
-        # Initialize Qlib with 1d data
-        from qlib.utils import init_instance_by_config
-        init_instance_by_config(
-            {
-                "provider_uri": str(qlib_data_1d_path),
-                "region": "us"
-            }
-        )
-        
-        self.all_1d_data = D.features(
-            D.instruments("all"), 
-            ["$paused", "$volume", "$factor", "$close"],
-            freq="day"
-        )
+        """Initialize the normalizer."""
         super().__init__(date_field_name, symbol_field_name)
-    
-    def normalize(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Normalize the 5-minute data.
+        qlib.init(provider_uri=str(qlib_data_1d_dir))
         
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Raw 5-minute data
-            
+        # Store required fields from 1d data
+        self._1d_fields = ["$volume", "$factor", "$close"]
+        self._calendar_list_1d = None
+        self._1d_data_cache: Dict[str, pd.DataFrame] = {}
+        
+    def _get_calendar_list(self) -> List[pd.Timestamp]:
+        """Get calendar list for 5-minute data.
+        
+        This method generates 5-minute intervals for US market hours:
+        - Morning session: 9:30 AM - 12:00 PM ET
+        - Afternoon session: 12:00 PM - 4:00 PM ET
+        
+        Note that US market trades continuously without a lunch break,
+        but we split the ranges at noon for better data management.
+        
         Returns
         -------
-        pd.DataFrame
-            Normalized data with adjusted prices
+        List[pd.Timestamp]
+            List of 5-minute timestamps during market hours
         """
-        if df.empty:
-            return df
-        
-        # Normalize and adjust prices using 1d data
-        df = calc_adjusted_price(
-            df=df,
-            _1d_data_all=self.all_1d_data,
-            _date_field_name=self._date_field_name,
-            _symbol_field_name=self._symbol_field_name,
-            frequence="5min",
-            am_range=self.AM_RANGE,
-            pm_range=self.PM_RANGE
-        )
-        
-        return df
-    
-    def _get_calendar_list(self) -> Iterable[pd.Timestamp]:
-        """Get calendar list for 5-minute data."""
-        return generate_minutes_calendar_from_daily(
+        calendar = generate_minutes_calendar_from_daily(
             self.calendar_list_1d,
             freq="5min",
             am_range=self.AM_RANGE,
             pm_range=self.PM_RANGE
         )
+        return calendar.tolist()
     
     @property
     def calendar_list_1d(self) -> List[pd.Timestamp]:
-        """Get 1d calendar list."""
-        calendar_list_1d = getattr(self, "_calendar_list_1d", None)
-        if calendar_list_1d is None:
-            calendar_list_1d = list(D.calendar(freq="day"))
-            setattr(self, "_calendar_list_1d", calendar_list_1d)
-        return calendar_list_1d
-    
-class FMP5minRunner(BaseRun):
-    """Runner for FMP 5-minute data collection process."""
-    
-    def __init__(self):
-        """Initialize FMP 5-minute runner."""
-        self._default_base_dir = Path("~/.qlib/qlib_data/us_fmp_5min")
-        super().__init__()
-        self._cur_module = importlib.import_module("us_m5")
+        """Get 1d calendar list.
         
-    @property
-    def default_base_dir(self) -> Path:
-        """Get default base directory for data storage."""
-        return self._default_base_dir
-        
-    @property
-    def collector_class_name(self) -> str:
-        """Get collector class name."""
-        return "FMP5minCollector"
-        
-    @property
-    def normalize_class_name(self) -> str:
-        """Get normalize class name."""
-        return "FMPNormalize5min"
+        Returns
+        -------
+        List[pd.Timestamp]
+            List of daily timestamps
+        """
+        if self._calendar_list_1d is None:
+            self._calendar_list_1d = list(D.calendar(freq="day"))
+        return self._calendar_list_1d
     
-    def download_data(
+    def _get_1d_data(self, symbol: str, start_time: pd.Timestamp, end_time: pd.Timestamp) -> pd.DataFrame:
+        """Get required 1d data for a symbol efficiently."""
+        cache_key = f"{symbol}_{start_time}_{end_time}"
+        if cache_key not in self._1d_data_cache:
+            # Get the last available trading day from calendar
+            last_trading_day = D.calendar(freq="day")[-1]
+            
+            try:
+                # For any data request, always get one extra day before start_time
+                # to ensure we have previous day's close and factor
+                query_start = start_time.normalize() - pd.Timedelta(days=1)
+                
+                # For live trading during market hours:
+                # Use data up to the last available trading day
+                now = pd.Timestamp.now(tz='America/New_York')
+                today = now.normalize()
+                is_trading_hours = (
+                    now.time() >= pd.Timestamp(self.AM_RANGE[0]).time() and 
+                    now.time() <= pd.Timestamp(self.PM_RANGE[1]).time()
+                )
+                
+                if is_trading_hours and end_time.normalize() == today:
+                    query_end = last_trading_day
+                    logger.warning(
+                        f"Processing live data for {symbol} during market hours "
+                        f"({start_time.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')}). "
+                        "Using last available trading day's data."
+                    )
+                    
+                    # Get historical data
+                    daily_df = D.features(
+                        [symbol], 
+                        self._1d_fields,
+                        start_time=query_start,
+                        end_time=query_end,
+                        freq="day"
+                    )
+                    
+                    if daily_df.empty:
+                        raise ValueError("No historical daily data available")
+                    
+                    # For live data, extend daily data with today using last known values
+                    # and set paused=0 since we're getting live data
+                    last_factor = daily_df["$factor"].iloc[-1]
+                    last_volume = daily_df["$volume"].iloc[-1]
+                    last_close = daily_df["$close"].iloc[-1]
+                    
+                    today_data = pd.DataFrame(
+                        {
+                            "$factor": [last_factor],
+                            "$volume": [last_volume],
+                            "$close": [last_close],
+                            "paused": [0],  # Not paused since we're getting live data
+                        },
+                        index=pd.MultiIndex.from_tuples([(symbol, today)], names=["instrument", "datetime"])
+                    )
+                    daily_df = pd.concat([daily_df, today_data])
+                    
+                else:
+                    # Normal case - get historical data
+                    daily_df = D.features(
+                        [symbol], 
+                        self._1d_fields,
+                        start_time=query_start,
+                        end_time=end_time,
+                        freq="day"
+                    )
+                    if daily_df.empty:
+                        raise ValueError("No daily data available")
+                    
+                    # Add paused field based on volume
+                    daily_df["paused"] = 0
+                    daily_df.loc[(daily_df["$volume"].isna()) | (daily_df["$volume"] <= 0), "paused"] = 1
+                    
+            except (ValueError, KeyError) as e:
+                # Handle case when no daily data is available
+                logger.warning(
+                    f"No daily data available for {symbol}. Using raw data with factor=1. "
+                    f"Error: {str(e)}"
+                )
+                # Create a default DataFrame with factor=1 for the entire period
+                dates = pd.date_range(
+                    start=start_time.normalize() - pd.Timedelta(days=1),  # Include previous day
+                    end=end_time.normalize(),
+                    freq='D'
+                )
+                daily_df = pd.DataFrame(
+                    {
+                        "$factor": 1.0,
+                        "$volume": np.nan,
+                        "$close": np.nan,
+                        "paused": 0,  # Default to not paused
+                    },
+                    index=pd.MultiIndex.from_product(
+                        [[symbol], dates],
+                        names=["instrument", "datetime"]
+                    )
+                )
+            
+            self._1d_data_cache[cache_key] = daily_df
+            
+        return self._1d_data_cache[cache_key]
+    
+    def normalize(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize the data to Qlib format."""
+        if df.empty:
+            return df
+            
+        # Basic normalization
+        df = df.copy()
+        df.set_index(self._date_field_name, inplace=True)
+        df.index = pd.to_datetime(df.index)
+        df.index = df.index.tz_localize(None)
+        df = df[~df.index.duplicated(keep="first")]
+        
+        # Get symbol and date range for 1d data
+        symbol = df[self._symbol_field_name].iloc[0]
+        start_time = df.index.min()
+        end_time = df.index.max()
+        
+        # Get 1d data for adjustments (will handle missing data case)
+        daily_df = self._get_1d_data(symbol, start_time, end_time)
+        
+        # Calendar alignment
+        if self._calendar_list is not None:
+            calendar_index = pd.DatetimeIndex(list(self._calendar_list))
+            date_range = pd.date_range(
+                start=start_time,
+                end=end_time,
+                freq="5min"
+            )
+            df = df.reindex(date_range.intersection(calendar_index))
+            
+        df.sort_index(inplace=True)
+        
+        # Handle invalid volume data
+        df.loc[(df["volume"] <= 0) | np.isnan(df["volume"]), list(set(df.columns) - {self._symbol_field_name})] = np.nan
+        
+        # Adjust prices using 1d data
+        df = calc_adjusted_price(
+            df=df,
+            _date_field_name=self._date_field_name,
+            _symbol_field_name=self._symbol_field_name,
+            frequence="5min",
+            _1d_data_all=daily_df,
+            calc_paused=self.CALC_PAUSED_NUM,
+            am_range=self.AM_RANGE,
+            pm_range=self.PM_RANGE,
+            consistent_1d=True,  # Ensure alignment with daily data
+        )
+        
+        return df.reset_index()
+
+class FMP5minNormalizeExtend(BaseFMPNormalizeExtend, FMP5minNormalize):
+    """Normalize FMP 5-minute data while maintaining consistency with existing Qlib data.
+    
+    This class extends FMP5minNormalize to ensure data consistency when updating
+    existing Qlib datasets. It does this by:
+    1. Loading existing data from the old Qlib directory
+    2. Finding the overlap point between old and new data
+    3. Adjusting new data to maintain continuity with old data
+    4. Ensuring price/volume ratios remain consistent
+    
+    This is particularly important when:
+    - Updating existing datasets with new data
+    - Ensuring price continuity across updates
+    - Maintaining consistent adjustment factors
+    """
+    
+    def __init__(
         self,
-        max_collector_count: int = 2,
-        delay: int = 0,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        check_data_length: Optional[int] = None,
-        limit_nums: Optional[int] = None,
-        qlib_data_1d_dir: str = "~/.qlib/qlib_data/us_fmp_d1",
+        old_qlib_data_dir: Union[str, Path],
+        date_field_name: str = "date",
+        symbol_field_name: str = "symbol",
         **kwargs
     ):
-        """Download data and convert to Qlib format.
+        """Initialize the extended normalizer.
         
         Parameters
         ----------
-        max_collector_count : int
-            Maximum collection attempts per symbol
-        delay : int
-            Delay between API calls in seconds
-        start : Optional[str]
-            Start date (YYYY-MM-DD)
-        end : Optional[str]
-            End date (YYYY-MM-DD)
-        check_data_length : Optional[int]
-            Minimum required data length
-        limit_nums : Optional[int]
-            Limit number of symbols to collect
-        qlib_data_1d_dir : str
-            Directory containing 1d Qlib data
+        old_qlib_data_dir: Union[str, Path]
+            Directory containing existing Qlib data to be updated
+        date_field_name: str
+            Name of the date field, default is "date"
+        symbol_field_name: str
+            Name of the symbol field, default is "symbol"
+        kwargs: dict
+            Additional arguments passed to parent class, including qlib_data_1d_dir
         """
-        # Download data
-        super().download_data(
-            max_collector_count=max_collector_count,
-            delay=delay,
-            start=start,
-            end=end,
-            check_data_length=check_data_length or 0,
-            limit_nums=limit_nums or 0,
-            qlib_data_1d_dir=qlib_data_1d_dir,
-            **kwargs
-        )
+        # Initialize the parent FMP5minNormalize first
+        super().__init__(date_field_name=date_field_name,
+                        symbol_field_name=symbol_field_name,
+                        **kwargs)
         
-        # Normalize data
-        self.normalize_data(qlib_data_1d_dir=qlib_data_1d_dir)
+        self.column_list = ["open", "high", "low", "close", "volume"]
+        self.old_qlib_data = self._get_old_data(old_qlib_data_dir)
         
-        # Convert to Qlib binary format
-        logger.info("Converting to Qlib binary format...")
-        dumper = DumpDataAll(
-            csv_path=str(self.normalize_dir),
-            qlib_dir=str(self.default_base_dir),
-            freq="5min",
-            max_workers=self.max_workers,
-            date_field_name="date",
-            symbol_field_name="symbol",
-        )
-        dumper.dump()
-        logger.info("Finished converting to Qlib format.")
-    
-    def update_data(
-        self,
-        qlib_data_dir: Union[str, Path],
-        check_data_length: Optional[int] = None,
-        delay: int = 1,
-        qlib_data_1d_dir: str = "~/.qlib/qlib_data/us_fmp_d1",
-        instruments: Optional[List[str]] = None,
-        **kwargs
-    ) -> None:
-        """Update data from the last available date.
+    def _get_old_data(self, qlib_data_dir: Union[str, Path]) -> pd.DataFrame:
+        """Get existing data from old Qlib directory.
         
         Parameters
         ----------
         qlib_data_dir : Union[str, Path]
-            Qlib data directory containing calendars
-        check_data_length : Optional[int]
-            Minimum required data length
-        delay : int
-            Delay between API calls in seconds
-        qlib_data_1d_dir : str
-            Directory containing 1d Qlib data
-        instruments : Optional[List[str]]
-            List of specific instruments to update. If None, updates all instruments
-        **kwargs : dict
-            Additional keyword arguments
+            Path to existing Qlib data directory
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing existing data with features
         """
-        qlib_dir = Path(qlib_data_dir).expanduser().resolve()
-        calendar_path = qlib_dir.joinpath("calendars/5min.txt")
-        instruments_path = qlib_dir.joinpath("instruments/all.txt")
-
-        # Get existing instruments
-        existing_instruments = None
-        if instruments_path.exists():
-            try:
-                instruments_df = pd.read_csv(
-                    instruments_path, 
-                    sep='\t', 
-                    names=['symbol', 'start_time', 'end_time']
-                )
-                if instruments is not None:
-                    # Filter existing instruments to only those requested
-                    existing_instruments = [
-                        symbol for symbol in instruments 
-                        if symbol in instruments_df['symbol'].tolist()
-                    ]
-                    if len(existing_instruments) != len(instruments):
-                        logger.warning(
-                            f"Some requested instruments not found in {instruments_path}. "
-                            f"Found {len(existing_instruments)} out of {len(instruments)}"
-                        )
+        qlib_data_dir = str(Path(qlib_data_dir).expanduser().resolve())
+        # Initialize a new Qlib instance for old data
+        qlib.init(provider_uri=qlib_data_dir, 
+                 expression_cache=None,
+                 dataset_cache=None)
+        
+        # Get features for all instruments
+        df = D.features(
+            D.instruments("all"), 
+            ["$" + col for col in self.column_list],
+            freq="5min"  # Important: specify 5min frequency
+        )
+        df.columns = self.column_list
+        return df
+        
+    def normalize(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize data while maintaining consistency with existing data.
+        
+        This method:
+        1. Performs basic normalization using parent class
+        2. Checks if symbol exists in old data
+        3. If exists, adjusts new data to maintain continuity
+        4. Handles special cases like missing data or gaps
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw data to normalize
+            
+        Returns
+        -------
+        pd.DataFrame
+            Normalized data aligned with existing data
+        """
+        # First apply standard normalization
+        df = super().normalize(df)
+        
+        # Prepare data for alignment
+        df.set_index(self._date_field_name, inplace=True)
+        symbol_name = df[self._symbol_field_name].iloc[0]
+        
+        # Check if symbol exists in old data
+        old_symbol_list = self.old_qlib_data.index.get_level_values("instrument").unique().to_list()
+        if str(symbol_name).upper() not in old_symbol_list:
+            logger.warning(f"Symbol {symbol_name} not found in existing data, using standard normalization")
+            return df.reset_index()
+            
+        # Get old data for this symbol
+        old_df = self.old_qlib_data.loc[str(symbol_name).upper()]
+        
+        try:
+            # Find the latest timestamp in old data
+            latest_date = old_df.index[-1]
+            
+            # Get data from the overlap point onwards
+            df = df.loc[latest_date:]
+            
+            if df.empty:
+                logger.warning(f"No new data after {latest_date} for {symbol_name}")
+                return df.reset_index()
+                
+            # Get the overlapping data point
+            new_latest_data = df.iloc[0]
+            old_latest_data = old_df.loc[latest_date]
+            
+            # Adjust each column to maintain continuity
+            for col in self.column_list:
+                if new_latest_data[col] == 0 or pd.isna(new_latest_data[col]):
+                    logger.warning(f"Invalid overlap value for {col} in {symbol_name}, skipping adjustment")
+                    continue
+                    
+                if col == "volume":
+                    # Volume needs to be divided to maintain ratio
+                    df[col] = df[col] / (new_latest_data[col] / old_latest_data[col])
                 else:
-                    existing_instruments = instruments_df['symbol'].tolist()
-                logger.info(f"Found {len(existing_instruments)} existing instruments")
-            except Exception as e:
-                logger.error(f"Error reading instruments file: {e}")
+                    # Prices need to be multiplied to maintain ratio
+                    df[col] = df[col] * (old_latest_data[col] / new_latest_data[col])
+            
+            # Remove the overlapping point to avoid duplication
+            df = df.drop(df.index[0])
+            
+        except Exception as e:
+            logger.error(f"Error adjusting data for {symbol_name}: {str(e)}")
+            # Return standard normalized data if adjustment fails
+            return df.reset_index()
+            
+        return df.reset_index()
 
-        # Get latest date from existing calendar
-        if not calendar_path.exists():
-            logger.warning(f"Calendar file not found: {calendar_path}")
-            start = None
-        else:
-            try:
-                with open(calendar_path, "r") as f:
-                    dates = f.readlines()
-                if dates:
-                    latest_date = pd.Timestamp(dates[-1].strip())
-                    # For 5min data, start from the next trading day
-                    start = (latest_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-                else:
-                    start = None
-            except Exception as e:
-                logger.error(f"Error reading calendar file: {e}")
-                start = None
-
-        # Set end date to tomorrow to ensure we get today's data
-        end = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-
-        if start and pd.Timestamp(start) >= pd.Timestamp(end):
-            logger.info("Already up to date, no new data to download")
-            return
-
-        # Download new data with existing instruments
+class FMP5minRunner(BaseFMPRunner):
+    """Runner for FMP 5-minute data collection process."""
+    
+    def __init__(self, max_workers: int = 4):
+        """Initialize the runner.
+        
+        Parameters
+        ----------
+        max_workers : int
+            Maximum number of worker processes
+        """
+        super().__init__(max_workers=max_workers, interval="5min")
+        
+    @property
+    def collector_class_name(self) -> str:
+        return "FMP5minCollector"
+        
+    @property
+    def normalize_class_name(self) -> str:
+        return "FMP5minNormalize"
+        
+    def run(
+        self,
+        save_dir: Union[str, Path],
+        qlib_dir: Union[str, Path],
+        qlib_data_1d_dir: Union[str, Path],
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        delay: float = 0.1,
+        limit_nums: Optional[int] = None,
+        instruments: Optional[List[str]] = None,
+        skip_existing: bool = False,
+        dump_bin: bool = True,
+        dump_all: bool = False,
+        dump_update: bool = True,
+    ):
+        """Run the data collection and dumping process.
+        
+        Parameters
+        ----------
+        save_dir : Union[str, Path]
+            Directory to save raw data
+        qlib_dir : Union[str, Path]
+            Directory for Qlib format data
+        qlib_data_1d_dir : Union[str, Path]
+            Directory containing daily data for adjustments
+        start : Optional[str]
+            Start date for data collection
+        end : Optional[str]
+            End date for data collection
+        delay : float
+            Delay between API calls
+        limit_nums : Optional[int]
+            Limit number of symbols to process
+        instruments : Optional[List[str]]
+            List of instruments to process
+        skip_existing : bool
+            Whether to skip existing files
+        dump_bin : bool
+            Whether to dump to binary format
+        dump_all : bool
+            Whether to dump all data (overwrite existing)
+        dump_update : bool
+            Whether to update existing data
+        """
+        logger.info("Starting FMP 5-minute data collection process...")
+        
+        # Download and optionally dump data
         self.download_data(
-            max_collector_count=2,
-            delay=delay,
+            save_dir=save_dir,
+            qlib_dir=qlib_dir,
             start=start,
             end=end,
-            check_data_length=check_data_length,  # type: ignore
-            instruments=existing_instruments,  # Pass existing instruments
-            qlib_data_1d_dir=qlib_data_1d_dir,
-            **kwargs
+            delay=delay,
+            limit_nums=limit_nums,
+            instruments=instruments,
+            skip_existing=skip_existing,
+            dump_bin=dump_bin,
+            dump_all=dump_all,
+            dump_update=dump_update,
+            qlib_data_1d_dir=qlib_data_1d_dir,  # Pass 1d data dir for adjustments
         )
         
-        # Then normalize it
-        self.normalize_data(qlib_data_1d_dir=qlib_data_1d_dir)
-        
-        # Finally dump to bin format with update mode
-        logger.info("Updating Qlib binary format...")
-        dumper = DumpDataUpdate(
-            csv_path=str(self.normalize_dir),
-            qlib_dir=str(qlib_data_dir),
-            freq="5min",
-            max_workers=self.max_workers,
-            date_field_name="date",
-            symbol_field_name="symbol",
-        )
-        dumper.dump()
-        logger.info("Finished updating Qlib format.")
+        logger.info("FMP 5-minute data collection process completed.")
 
 if __name__ == "__main__":
     import fire

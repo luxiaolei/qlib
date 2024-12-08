@@ -4,18 +4,23 @@ This module provides utility functions for collecting and processing financial d
 Financial Modeling Prep (FMP) API. It includes functions for API requests, data validation,
 and data formatting.
 """
-
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, cast
 
 import pandas as pd
 import requests
+import yaml
 from dotenv import load_dotenv
 from loguru import logger
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+__all__ = ["ParallelProcessor", "get_fmp_data",
+           "get_fmp_data_parallel", "get_us_exchange_symbols",
+           "format_daily_data", "load_constants"]
 
 # Load environment variables from .env file
 load_dotenv()
@@ -147,6 +152,13 @@ class ParallelProcessor(Generic[T]):
         
         return results
 
+
+def load_constants() -> Dict[str, Any]:
+    """Load constants from constant.yaml file."""
+    with open(Path(__file__).parent / "constant.yaml") as f:
+        return yaml.safe_load(f)
+    
+    
 def get_fmp_data(url: str, api_key: str, delay: float = 0.2) -> Dict[str, Any]:
     """Get data from FMP API with rate limiting and retries.
     
@@ -248,7 +260,8 @@ def get_us_exchange_symbols(api_key: str) -> List[str]:
     - Removes duplicates and sorts the list
     - Handles special symbol formats (e.g., preferred shares)
     """
-    exchanges = ["NASDAQ", "NYSE", "AMEX"]
+    constants = load_constants()
+    exchanges = constants["exchanges"]
     symbols = []
     
     with Progress(
@@ -259,7 +272,7 @@ def get_us_exchange_symbols(api_key: str) -> List[str]:
         task = progress.add_task("Fetching US exchange symbols...", total=len(exchanges))
         
         for exchange in exchanges:
-            url = f"https://financialmodelingprep.com/api/v3/symbol/{exchange}?apikey={api_key}"
+            url = f"{constants['api']['base_url']}/symbol/{exchange}?apikey={api_key}"
             data = get_fmp_data(url, api_key)
             if isinstance(data, list):
                 typed_data = cast(List[Dict[str, Any]], data)
@@ -267,14 +280,7 @@ def get_us_exchange_symbols(api_key: str) -> List[str]:
             progress.advance(task)
     
     # Add US market indexes with descriptions
-    us_indexes = [
-        "^SPX",      # S&P 500
-        "^IXIC",     # NASDAQ Composite
-        "^DJI",      # Dow Jones Industrial Average
-        # ... (rest of the indexes)
-    ]
-    
-    symbols.extend(us_indexes)
+    symbols.extend([index["symbol"] for index in constants["indexes"]])
     return sorted(list(set(symbols)))
 
 def format_daily_data(data: List[Dict[str, Any]], symbol: str) -> pd.DataFrame:
@@ -423,3 +429,71 @@ def split_5min_date_range(
             break
     
     return date_ranges
+
+def split_daily_date_range(
+        start_datetime: pd.Timestamp, 
+        end_datetime: pd.Timestamp
+    ) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
+        """Split date range into chunks for efficient API calls.
+        
+        Parameters
+        ----------
+        start_datetime : pd.Timestamp
+            Start date
+        end_datetime : pd.Timestamp
+            End date
+            
+        Returns
+        -------
+        List[Tuple[pd.Timestamp, pd.Timestamp]]
+            List of (start, end) date pairs for each chunk
+            
+        Notes
+        -----
+        - Splits date range into 4-year chunks
+        - For ranges > 4 years, creates multiple chunks
+        - Handles partial periods at start and end
+        - Ensures no gaps in date coverage
+        """
+        MAX_YEARS_PER_CHUNK = 4
+        date_ranges = []
+        current_date = start_datetime
+        
+        while current_date < end_datetime:
+            # Calculate years difference from current to end
+            years_remaining = (end_datetime - current_date).days / 365.25
+            
+            if years_remaining <= MAX_YEARS_PER_CHUNK:
+                # If remaining period is less than max chunk size, use end_datetime
+                chunk_end = end_datetime
+            else:
+                # Create a 4-year chunk
+                chunk_end = current_date + pd.DateOffset(years=MAX_YEARS_PER_CHUNK)
+                # Adjust to end of year if close to year boundary
+                if (chunk_end - pd.Timestamp(f"{chunk_end.year}-12-31")).days < 7:
+                    chunk_end = pd.Timestamp(f"{chunk_end.year}-12-31")
+            
+            date_ranges.append((current_date, chunk_end))
+            current_date = chunk_end + pd.Timedelta(days=1)
+            
+            # Safety check to prevent infinite loops
+            if len(date_ranges) > 100:  # Arbitrary large number
+                logger.warning("Too many date chunks created, breaking loop")
+                break
+        
+        return date_ranges
+
+
+def parse_index_data(qlib_dir: str|Path, method: str = "parse_instruments"):
+    """
+    Parse index data from FMP to Qlib format.
+    """
+    from scripts.data_collector.us_index.collector import get_instruments
+    index_list = ["SP500", "NASDAQ100", "DJIA", "SP400"]
+    for index in index_list:
+        get_instruments(str(qlib_dir), index, market_index="us_index", method=method)
+        
+        
+if __name__ == "__main__":
+    qlib_dir = Path("~/.qlib/qlib_data/us_data")
+    parse_index_data(qlib_dir)

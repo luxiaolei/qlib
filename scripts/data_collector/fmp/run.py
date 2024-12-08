@@ -2,12 +2,13 @@
 Command line interface for FMP data collection.
 """
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import List
 from zoneinfo import ZoneInfo
 
 import fire
+import pandas as pd
 import pandas_market_calendars as mcal
 import schedule
 from dotenv import load_dotenv
@@ -18,39 +19,38 @@ from rich.table import Table
 
 from scripts.data_collector.fmp.us_daily import FMPDailyRunner
 from scripts.data_collector.fmp.us_m5 import FMP5minRunner
+from scripts.data_collector.fmp.utils import load_constants
 
 # Load environment variables
 load_dotenv()
 console = Console()
 
 # Debug mode settings
-DEBUG = False 
+DEBUG = True 
 if DEBUG:
     console.print("[bold yellow]Running in DEBUG mode - limited data collection[/]")
     DEBUG_START_DATE = "2022-01-01"  # Last 2 years
     DEBUG_END_DATE = "2024-12-01"
     DEBUG_SYMBOLS_LIMIT = 10
+    # Add M5 specific debug settings
+    M5_DEBUG_START_DATE = (datetime.now(ZoneInfo('America/New_York')) - pd.Timedelta(days=2)).strftime('%Y-%m-%d')
+    M5_DEBUG_END_DATE = datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
 
 
 class FMPDataManager:
     """Manager for FMP data collection operations."""
     
-    DEFAULT_INDEXES = [
-        "^SPX",      # S&P 500
-        "^IXIC",     # NASDAQ Composite
-        "^DJI",      # Dow Jones Industrial Average
-        "^RUT",      # Russell 2000
-        "^VIX",      # VIX Volatility Index
-    ]
-    
     def __init__(self):
         """Initialize FMP data manager."""
-        self.daily_runner = FMPDailyRunner()
-        self.m5_runner = FMP5minRunner()
+        
+        # Load constants from YAML file
+        self.constants = load_constants()
+        self.daily_runner = FMPDailyRunner(max_workers=self.constants["collection"]["max_workers"])
+        self.m5_runner = FMP5minRunner(max_workers=self.constants["collection"]["max_workers"])
         self.nyse = mcal.get_calendar('NYSE')
         self.ny_tz = ZoneInfo('America/New_York')
-        self.favourite_instruments = self._load_favourite_instruments()
 
+        self.favourite_instruments = self._load_favourite_instruments()
 
     def show_menu(self) -> None:
         """Display interactive menu for data collection options."""
@@ -70,38 +70,37 @@ class FMPDataManager:
             
             if choice == 1:
                 self.manual_download()
+                if not Confirm.ask("\nReturn to main menu?", default=True):
+                    break
             elif choice == 2:
                 self.manual_update()
+                if not Confirm.ask("\nReturn to main menu?", default=True):
+                    break
             elif choice == 3:
                 self.start_routine_update()
+                break  # No need to ask here since service runs continuously
             else:
                 console.print("[yellow]Exiting...[/]")
                 break
             
     def _load_favourite_instruments(self) -> List[str]:
-        """Load or create favourite instruments list.
-        
-        Returns
-        -------
-        List[str]
-            List of favourite instruments including indexes
-        """
+        """Load or create favourite instruments list."""
         favourites_file = Path("~/.qlib/qlib_data/us_fmp_5min/instruments/favourites.txt").expanduser()
         favourites_file.parent.mkdir(parents=True, exist_ok=True)
         
         if not favourites_file.exists():
-            # Create default favourites file with indexes
+            # Create default favourites file with indexes from constants
             with favourites_file.open("w") as f:
-                for index in self.DEFAULT_INDEXES:
-                    f.write(f"{index}\n")
+                for index in self.constants["indexes"]:
+                    f.write(f"{index['symbol']}\n")
             logger.info(f"Created default favourites file with indexes at {favourites_file}")
-            return self.DEFAULT_INDEXES
+            return [index["symbol"] for index in self.constants["indexes"]]
         
         with favourites_file.open("r") as f:
             instruments = [line.strip() for line in f if line.strip()]
             
-        if len(instruments) > 740:
-            logger.warning("Too many favourite instruments (>740), performance may be affected")
+        if len(instruments) > self.constants["api"].get("calls_per_minute", 740):
+            logger.warning(f"Too many favourite instruments (>{self.constants['api'].get('calls_per_minute', 740)}), performance may be affected")
             
         return instruments
 
@@ -177,15 +176,19 @@ class FMPDataManager:
             if download_daily:
                 console.print("\n[bold green]Downloading daily data...[/]")
                 self.daily_runner.download_data(
-                    delay=0.2, # type: ignore
-                    max_workers=4, 
+                    delay=0.2,  # type: ignore
+                    start=DEBUG_START_DATE if DEBUG else None,
+                    end=DEBUG_END_DATE if DEBUG else None,
+                    limit_nums=DEBUG_SYMBOLS_LIMIT if DEBUG else None,
                 )
                 
             if download_m5:
                 console.print("\n[bold green]Downloading 5-minute data...[/]")
                 self.m5_runner.download_data(
-                    delay=0,
-                    max_workers=4,
+                    delay=0.2,  # type: ignore
+                    start=M5_DEBUG_START_DATE if DEBUG else None,
+                    end=M5_DEBUG_END_DATE if DEBUG else None,
+                    limit_nums=DEBUG_SYMBOLS_LIMIT if DEBUG else None,
                 )
                 
             console.print("[bold green]Download completed successfully![/]")
@@ -223,7 +226,7 @@ class FMPDataManager:
                 logger.info("Updating 5-minute data for other instruments...")
                 self.m5_runner.update_data(
                     qlib_data_dir="~/.qlib/qlib_data/us_fmp_5min",
-                    delay=0,
+                    delay=0.2,  # type: ignore
                     instruments=non_favourites
                 )
                 logger.info("Other instruments update completed")
@@ -234,16 +237,13 @@ class FMPDataManager:
         """Start routine update service with scheduling."""
         console.print("[bold green]Starting routine update service...[/]")
         
-        # Schedule daily updates at 16:30 ET
-        schedule.every().day.at("16:30").do(
-            self.daily_runner.update_data,
-            qlib_data_dir="~/.qlib/qlib_data/us_fmp_d1",
-            delay=0.2
-        )
-        
-        # Schedule favourite instruments updates during market hours
-        def schedule_m5_favourite_updates():
-            """Schedule 5-minute updates for favourite instruments."""
+        def run_m5_updates():
+            """Run 5-minute updates during market hours."""
+            last_update_time = None
+            slowest_update_time = 0
+            update_times: List[float] = []  # Store last 10 update times
+            MAX_TIMES_STORED = 100
+            
             now = datetime.now(self.ny_tz)
             schedule_date = self.nyse.schedule(start_date=now.date(), end_date=now.date())
             
@@ -251,19 +251,44 @@ class FMPDataManager:
                 market_open = schedule_date.iloc[0]['market_open'].tz_convert(self.ny_tz)
                 market_close = schedule_date.iloc[0]['market_close'].tz_convert(self.ny_tz)
                 
-                current_time = market_open
-                while current_time <= market_close:
-                    schedule.every().day.at(current_time.strftime("%H:%M")).do(
-                        self.update_m5_data_favourites
-                    )
-                    current_time += timedelta(minutes=5)
+                while True:
+                    now = datetime.now(self.ny_tz)
+                    if now > market_close:
+                        break
+                        
+                    if market_open <= now <= market_close and now.minute % 5 == 0:
+                        start_time = time.time()
+                        self.update_m5_data_favourites()
+                        update_duration = time.time() - start_time
+                        
+                        # Update statistics
+                        update_times.append(update_duration)
+                        if len(update_times) > MAX_TIMES_STORED:
+                            update_times.pop(0)
+                        last_update_time = now
+                        slowest_update_time = max(slowest_update_time, update_duration)
+                        
+                        # Log update statistics
+                        avg_duration = sum(update_times) / len(update_times)
+                        logger.debug(
+                            f"5-min update stats | "
+                            f"Last update: {last_update_time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                            f"Avg duration (last {len(update_times)}): {avg_duration:.2f}s | "
+                            f"Slowest duration: {slowest_update_time:.2f}s"
+                        )
+                    
+                    time.sleep(1)
 
-        # Schedule non-favourite instruments updates during off-market hours
-        schedule.every().day.at("20:00").do(self.update_m5_data_others)  # 8 PM ET
-        schedule.every().day.at("04:00").do(self.update_m5_data_others)  # 4 AM ET
+        # Register jobs with NY timezone string
+        schedule.every().day.at("16:30", tz="America/New_York").do(
+            self.daily_runner.update_data,
+            qlib_data_dir="~/.qlib/qlib_data/us_fmp_d1",
+            delay=0.2
+        )
+        schedule.every().day.at("20:00", tz="America/New_York").do(self.update_m5_data_others)
         
-        # Schedule the initial m5 updates and reschedule daily
-        schedule.every().day.at("00:01").do(schedule_m5_favourite_updates)
+        # Schedule 5-min updates to start at market open
+        schedule.every().day.at("09:30", tz="America/New_York").do(run_m5_updates)
         
         console.print("[green]Update service started. Press Ctrl+C to stop.[/]")
         
@@ -274,7 +299,6 @@ class FMPDataManager:
         except KeyboardInterrupt:
             console.print("[yellow]Stopping update service...[/]")
             schedule.clear()
-
 
 
 def main(

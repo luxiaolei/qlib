@@ -1,0 +1,67 @@
+# API Configuration
+api:
+  base_url: "https://financialmodelingprep.com/api/v3"
+  rate_limit: 740  # calls per minute
+
+# Default Paths
+paths:
+  daily_data: "~/.qlib/qlib_data/us_fmp_d1"
+  m5_data: "~/.qlib/qlib_data/us_fmp_5min"
+
+# Market Hours (ET)
+market:
+  am_range: ["09:30:00", "11:59:00"]
+  pm_range: ["12:00:00", "15:59:00"]
+
+# Default Date Ranges
+dates:
+  daily_start: "2004-01-01"
+  m5_start: "2024-01-01"  # Last 30 days by default
+
+
+# Data Collection Settings
+collection:
+  max_workers: 16
+  max_collector_count: 2
+  default_delay: 0.2
+  chunk_size: 4  # days per chunk for 5min data
+
+
+# US Exchanges
+exchanges:
+  - "NASDAQ"
+  - "NYSE"
+  - "AMEX"
+
+# US Market Indexes
+indexes:
+  - symbol: "^SPX"
+    description: "S&P 500"
+  - symbol: "^NDX"
+    description: "NASDAQ 100"
+  - symbol: "^IXIC"
+    description: "NASDAQ Composite"
+  - symbol: "^DJI"
+    description: "Dow Jones Industrial Average"
+  - symbol: "^RUT"
+    description: "Russell 2000"
+  - symbol: "^NYA"
+    description: "NYSE Composite"
+  - symbol: "^OEX"
+    description: "S&P 100"
+  - symbol: "^VIX"
+    description: "CBOE Volatility Index"
+  - symbol: "^GSPC"
+    description: "S&P 500 (Alternative)"
+  - symbol: "^RUA"
+    description: "Russell 3000"
+  - symbol: "^DJT"
+    description: "Dow Jones Transportation Average"
+  - symbol: "^DJU"
+    description: "Dow Jones Utility Average"
+  - symbol: "^MID"
+    description: "S&P MID CAP 400"
+  - symbol: "^DWCF"
+    description: "Dow Jones U.S. Total Stock Market"
+  - symbol: "^W5000"
+    description: "Wilshire 5000 Total Market"
