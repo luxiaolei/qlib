@@ -2,21 +2,21 @@
 # Licensed under the MIT License.
 
 
-from __future__ import division
-from __future__ import print_function
+from __future__ import division, print_function
+
+from typing import List, Type, Union
 
 import numpy as np
 import pandas as pd
-
-from typing import Union, List, Type
 from scipy.stats import percentileofscore
-from .base import Expression, ExpressionOps, Feature, PFeature
+
 from ..log import get_module_logger
 from ..utils import get_callable_kwargs
+from .base import Expression, ExpressionOps, Feature, PFeature
 
 try:
-    from ._libs.rolling import rolling_slope, rolling_rsquare, rolling_resi
-    from ._libs.expanding import expanding_slope, expanding_rsquare, expanding_resi
+    from ._libs.expanding import expanding_resi, expanding_rsquare, expanding_slope
+    from ._libs.rolling import rolling_resi, rolling_rsquare, rolling_slope
 except ImportError:
     print(
         "#### Do not import qlib package in the repository directory in case of importing qlib from . without compiling #####"
@@ -740,7 +740,7 @@ class Rolling(ExpressionOps):
         return "{}({},{})".format(type(self).__name__, self.feature, self.N)
 
     def _load_internal(self, instrument, start_index, end_index, *args):
-        series = self.feature.load(instrument, start_index, end_index, *args)
+        series:pd.Series = self.feature.load(instrument, start_index, end_index, *args)
         # NOTE: remove all null check,
         # now it's user's responsibility to decide whether use features in null days
         # isnull = series.isnull() # NOTE: isnull = NaN, inf is not null
