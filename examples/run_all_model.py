@@ -3,8 +3,6 @@
 
 import functools
 import glob
-import inspect
-import os
 import shutil
 import signal
 import statistics
@@ -13,12 +11,11 @@ import sys
 import tempfile
 import time
 from datetime import datetime
-from operator import xor
 from pathlib import Path
 from pprint import pprint
 
 import fire
-import yaml
+from ruamel.yaml import YAML
 
 import qlib
 from qlib.tests.data import GetData
@@ -209,7 +206,8 @@ def gen_and_save_md_table(metrics, dataset):
 # read yaml, remove seed kwargs of model, and then save file in the temp_dir
 def gen_yaml_file_without_seed_kwargs(yaml_path, temp_dir):
     with open(yaml_path, "r") as fp:
-        config = yaml.safe_load(fp)
+        yaml = YAML(typ="safe", pure=True)
+        config = yaml.load(fp)
     try:
         del config["task"]["model"]["kwargs"]["seed"]
     except KeyError:

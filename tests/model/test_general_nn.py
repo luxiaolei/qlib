@@ -51,6 +51,8 @@ class TestNN(TestAutoData):
         model_l = [
             GeneralPTNN(
                 n_epochs=2,
+                batch_size=32,
+                n_jobs=0,
                 pt_model_uri="qlib.contrib.model.pytorch_gru_ts.GRUModel",
                 pt_model_kwargs={
                     "d_feat": 3,
@@ -62,6 +64,8 @@ class TestNN(TestAutoData):
             ),
             GeneralPTNN(
                 n_epochs=2,
+                batch_size=32,
+                n_jobs=0,
                 pt_model_uri="qlib.contrib.model.pytorch_nn.Net",  # it is a MLP
                 pt_model_kwargs={
                     "input_dim": 3,

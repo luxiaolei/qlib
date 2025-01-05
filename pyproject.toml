@@ -96,23 +96,95 @@ torchaudio = ">=2.1.0, <3.0.0"
 qrun = "qlib.workflow.cli:run"
 
 [build-system]
-requires = [
-    "poetry-core>=1.0.0",
-    "Cython>=0.29.0",
-    "setuptools>=75.3.0",
-    "wheel>=0.40.0",
-    "numpy>=1.23.3"
+requires = ["setuptools", "cython", "numpy>=1.24.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+classifiers = [
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS",
+  "License :: OSI Approved :: MIT License",
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
 ]
-build-backend = "poetry.core.masonry.api"
+name = "pyqlib"
+dynamic = ["version"]
+description = "A Quantitative-research Platform"
+requires-python = ">=3.8.0"
+readme = {file = "README.md", content-type = "text/markdown"}
 
-[tool.cython-build-options]
-language_level = "3"
+dependencies = [
+  "pyyaml",
+  "numpy",
+  "pandas",
+  "mlflow",
+  "filelock>=3.16.0",
+  "redis",
+  "dill",
+  "fire",
+  "ruamel.yaml>=0.17.38",
+  "python-redis-lock",
+  "tqdm",
+  "pymongo",
+  "loguru",
+  "lightgbm",
+  "gym",
+  "cvxpy",
+  "joblib",
+  "matplotlib",
+  "jupyter",
+  "nbconvert",
+]
 
-[[tool.poetry.source]]
-name = "aliyun"
-url = "https://mirrors.aliyun.com/pypi/simple"
-priority = "primary"
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "statsmodels",
+]
+# On macos-13 system, when using python version greater than or equal to 3.10,
+# pytorch can't fully support Numpy version above 2.0, so, when you want to install torch,
+# it will limit the version of Numpy less than 2.0.
+rl = [
+  "tianshou<=0.4.10",
+  "torch",
+  "numpy<2.0.0",
+]
+lint = [
+  "black",
+  "pylint",
+  "mypy<1.5.0",
+  "flake8",
+  "nbqa",
+]
+docs = [
+  "sphinx",
+  "sphinx_rtd_theme",
+  "readthedocs_sphinx_ext",
+]
+package = [
+  "twine",
+  "build",
+]
+# test_pit dependency packages
+test = [
+  "yahooquery",
+  "baostock",
+]
+analysis = [
+  "plotly",
+]
 
-[[tool.poetry.source]]
-name = "pypi"
-priority = "supplemental"
+[tool.setuptools]
+packages = [
+  "qlib",
+]
+
+[project.scripts]
+qrun = "qlib.workflow.cli:run"

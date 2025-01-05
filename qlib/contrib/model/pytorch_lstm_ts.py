@@ -55,7 +55,7 @@ class LSTM(Model):
         n_jobs=10,
         GPU=0,
         seed=None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         
