@@ -141,6 +141,7 @@ dependencies = [
   "matplotlib",
   "jupyter",
   "nbconvert",
+  "pyarrow",
 ]
 
 [project.optional-dependencies]
