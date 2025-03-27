@@ -1,0 +1,186 @@
+# QLib Data Implementation Lessons Learned
+
+## Data Structure
+- QLib expects data in a specific directory structure under ~/.qlib/qlib_data/[region]_data/
+- Main directories include: calendars/, features/, instruments/, financial/
+- Binary (.bin) format is used for efficiency
+- Different regions can have different data structures
+
+## Data Handling
+- Timezone handling is a critical consideration when mixing data from different sources
+- Always normalize timestamps to a consistent timezone during preprocessing
+- QLib handles index constituent changes through instrument files with start/end dates
+- For intraday data, price adjustments must align with daily factors
+- Point-in-Time (PIT) data is essential for avoiding look-ahead bias with financial statements
+
+## Implementation Tips
+- Use rich.console for better logging and user interaction
+- Organize custom data collectors in scripts/data_collector/[source_name]/
+- For forex data, create custom calendars to reflect 24/5 trading hours
+- Separate data collection, normalization, and dumping steps for better maintenance
+- Always convert CSV data to binary format using dump_bin.py for performance
+
+## Common Pitfalls
+- Misaligned timestamps when mixing different timezone data
+- Inconsistent price adjustments between daily and intraday data
+- Look-ahead bias from using final versions of data instead of as-known-at-time versions
+- Not handling index constitution changes correctly (survivorship bias)
+- Using the wrong region setting during QLib initialization
+
+## Best Practices
+- Create custom data normalizers for each data source
+- Apply consistent timezone handling across all data sources
+- Use uv to manage Python package dependencies
+- Document the data pipeline thoroughly
+- Develop data quality checks to verify consistency
+
+# FMP Data Collector Lessons Learned
+
+## FMP Data Collector - Lessons Learned
+
+### API Observations
+- FMP provides both daily and intraday data, but intraday data is only available for the last 5-7 trading days on lower tier plans
+- API rate limits are strict (250 requests/minute for free tier, 600 for Starter, 1200 for Professional)
+- Historical constituents data requires premium subscription
+- Adjustments for splits/dividends are available but need to be separately applied
+- Date formatting needs to be in YYYY-MM-DD format for API calls
+- Some API endpoints are only available on premium plans
+- Data format needs to be transformed to be compatible with Qlib
+
+### Design Considerations
+- Redis-based rate limiting is essential to avoid API throttling
+- Incremental collection is important to minimize redundant API calls
+- Need to handle both index constituents and custom symbol lists
+- Separate handling needed for daily vs. intraday data
+- Special care needed for live data vs. historical data collection
+- Need to track API usage and implement backoff strategies
+- Caching of API responses reduces redundant calls
+
+### Important Features
+- Support for daily and multiple intraday intervals (1min, 5min, 15min, 30min, 1hour)
+- Robust error handling and retries for API failures
+- Progress tracking and comprehensive logging
+- Data quality checks and validation
+- Flexibility in output format and directory structure
+- Clean interface for both CLI and programmatic use
+- Support for incremental updates
+
+### Implementation Notes
+- Use async APIs for better performance and concurrency
+- Implement proper connection pooling for API client
+- Ensure proper clean-up of connections and resources
+- Redis integration needs careful implementation for rate limiting
+- Consider using asyncio.Semaphore for additional concurrency control
+- Comprehensive documentation is essential for maintainability
+- Testing with small symbol sets first is recommended
+
+### Data Quality Notes
+- Need to verify data completeness (no missing days/candles)
+- Handle missing data gracefully (e.g., market holidays)
+- Ensure consistency between daily and intraday data
+- Verify price adjustments are correctly applied
+- Validate symbol universes against reference data
+- Consider implementing data quality metrics
+
+### Performance Optimizations
+- Batch processing of symbols improves efficiency
+- Parallel processing needs to be balanced with rate limits
+- Memory usage can be high for large symbol sets
+- Consider streaming to disk for very large datasets
+- Profile and optimize code for bottlenecks
+- Use efficient data structures for in-memory operations
+
+### CLI Implementation
+- Rich library provides excellent UI for command-line interfaces
+- Typer makes it easy to create structured CLI commands
+- Interactive prompts improve user experience
+- Clear display of collection plans before execution
+- Detailed progress information during collection
+- Summary tables are helpful for showing results
+- Validation of input parameters prevents errors
+- Separate commands for different collection types (daily, intraday, index)
+
+### Testing Approach
+- Created dedicated test script to verify implementation
+- Test both API client and data collector components
+- Use small sample sizes for quick validation
+- Implement tests for edge cases (e.g., missing data)
+- Temporary directories for test output prevents pollution
+- Verify data file creation and content
+- Detailed test output with rich console formatting
+- Summary table of test results is helpful
+
+### Configuration Management
+- YAML format works well for complex configuration
+- Environment variables for sensitive information (API keys)
+- Separate configuration for different collection types
+- Clear documentation of configuration options
+- Example configuration file helps users get started
+- Validation of configuration prevents runtime errors
+
+### Code Organization
+- Modular design with clear separation of concerns
+- API client handles communication with FMP
+- Collectors implement the data collection logic
+- Index manager handles constituent data
+- CLI provides user interface
+- Utils contain shared functionality
+- Clear imports reduce dependencies between modules
+
+# FMP Data Collector Implementation Lessons
+
+## API Observations
+- The FMP API has rate limits (250 requests/minute) that need to be handled properly
+- Intraday data is available but may be limited for certain time periods
+- The API separates daily and intraday data into different endpoints
+- Data format requires transformation to match Qlib's expected format (date, open, high, low, close, volume)
+- Adjusted prices (adj_close, adj_open, etc.) need to be calculated correctly for daily data
+
+## Design Considerations
+- Redis-based rate limiting with sliding window is essential for reliable collection
+- Incremental data collection improves efficiency for large datasets
+- Different collectors are needed for daily vs. intraday data
+- Symbol list management should handle index constituents and custom symbol lists
+- Need to handle special characters in symbols and filter out non-tradable symbols
+
+## Important Features Implemented
+- Daily and intraday interval support (1d, 1min, 5min, 15min, 30min, 1hour)
+- Rich progress display with detailed status for each symbol
+- Redis-based rate limiter with sliding window implementation
+- Robust error handling and retries for failed requests
+- Data quality checks and missing data detection
+
+## Implementation Notes
+- Use asyncio for concurrent downloads and improved performance
+- Careful session management to avoid unclosed client sessions
+- Redis integration is important but needs proper error handling for when Redis is unavailable
+- Structured collectors with inheritance to share common functionality
+- Clear documentation for all methods and classes
+
+## Data Quality Notes
+- FMP provides both adjusted and unadjusted prices for daily data
+- For intraday data, adjusted prices may not be available, so we duplicate the unadjusted values
+- Missing data should be handled gracefully and reported clearly
+- Date ranges should be validated and data consistency checked
+
+## Performance Optimizations
+- Batch processing symbols for better progress tracking and memory management
+- Parallel processing with configurable workers to manage system resources
+- Efficient memory usage by avoiding unnecessary data duplication
+- Configurable retries and timeouts to handle temporary API issues
+
+## Issues Encountered and Solutions
+- Progress display causing "Only one live display may be active at once" error
+  - Solution: Used a context manager with conditional progress display initialization
+  - Passed existing progress to recursive calls rather than creating new instances
+- Symbols property conflict with self.symbols attribute
+  - Solution: Removed the property and directly used the attribute
+- Properly close aiohttp sessions using an AsyncExitStack
+- CLI needed careful argparse/typer parameter handling to ensure proper command-line usage
+
+## Next Steps
+- Implement more robust index constituent handling with historical changes
+- Add data validation to ensure quality before saving
+- Set up automated scheduling of data collection
+- Implement proper data merging with existing datasets
+- Create data converters from FMP format to Qlib's expected format 

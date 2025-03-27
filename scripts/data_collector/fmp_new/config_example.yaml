@@ -1,0 +1,64 @@
+# FMP Data Collector Configuration Example
+
+# API Settings
+api:
+  key: "${FMP_API_KEY}"  # Pull from environment variable
+  base_url: "https://financialmodelingprep.com/api"
+  timeout: 30  # seconds
+  max_retries: 3
+
+# Rate Limiting
+rate_limit:
+  enabled: true
+  redis_url: "redis://localhost:6379/0"
+  max_requests_per_minute: 250  # Adjust based on your FMP subscription
+  redis_key_prefix: "fmp_rate_limit:"
+
+# Data Collection Settings
+collection:
+  # Daily data settings
+  daily:
+    save_dir: "./data/fmp/daily"
+    start_date: "2018-01-01"
+    end_date: "2023-12-31"
+    symbols_source: "index"  # "index" or "file"
+    index_name: "sp500"  # Used when symbols_source is "index"
+    symbols_file: null  # Used when symbols_source is "file"
+    incremental: true
+    overwrite: false
+    max_workers: 5
+    batch_size: 100
+
+  # Intraday data settings
+  intraday:
+    save_dir: "./data/fmp/intraday"
+    start_date: "2023-01-01"
+    end_date: "2023-12-31"
+    interval: "15min"  # Options: 1min, 5min, 15min, 30min, 1hour
+    symbols_source: "index"
+    index_name: "sp500"
+    symbols_file: null
+    incremental: true
+    overwrite: false
+    max_workers: 3
+    batch_size: 50
+    lookback_days: 7  # Days to look back for available intraday data
+
+# Index Management
+index:
+  save_dir: "./data/fmp/index"
+  index_list:
+    - name: "sp500"
+      fmp_id: "S&P 500"
+    - name: "dow"
+      fmp_id: "DOWJONES"
+    - name: "nasdaq"
+      fmp_id: "NASDAQ 100"
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "./logs/fmp_collector.log"
+  format: "{time} | {level} | {message}"
+  rotation: "1 day"
+  compression: "zip" 
