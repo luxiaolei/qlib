@@ -39,7 +39,7 @@ This experiment management system defines a set of interface and provided a conc
 
 .. note::
 
-   ``pyqlib`` requires ``mlflow>=2.12,<3`` to ensure Python 3.12 environments install pre-built wheels. When Azure Blob Storage support is needed, install ``mlflow`` with its Azure extra (``pip install "mlflow[azure]"``) so the optional artifact repository remains available.
+``pyqlib`` requires ``mlflow>=2.12,<4`` (verified with MLflow 3.7.0 on Python 3.11/3.12). When Azure Blob Storage support is needed, install ``mlflow`` with its Azure extra (``pip install "mlflow[azure]"``) so the optional artifact repository remains available.
 
 If users set the implementation of ``ExpManager`` to be ``MLflowExpManager``, they can use the command `mlflow ui` to visualize and check the experiment results. For more information, please refer to the related documents `here <https://www.mlflow.org/docs/latest/cli.html#mlflow-ui>`_.
 
